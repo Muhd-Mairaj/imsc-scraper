@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Local WhatsApp credentials and selected group configuration
+data/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Editor and OS metadata
+.DS_Store

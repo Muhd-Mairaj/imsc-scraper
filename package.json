@@ -1,0 +1,30 @@
+{
+  "name": "imsc-scraper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Incremental scraper for a WhatsApp Community announcements group",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "build": "tsc --project tsconfig.json",
+    "start": "bun run dist/index.js",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  },
+  "engines": {
+    "bun": ">=1.3.0",
+    "node": ">=20.17.0"
+  },
+  "dependencies": {
+    "@inquirer/select": "5.2.4",
+    "qrcode-terminal": "0.12.0",
+    "whatsapp-web.js": "1.34.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.4.1",
+    "@types/qrcode-terminal": "0.12.2",
+    "typescript": "7.0.2"
+  },
+  "trustedDependencies": [
+    "puppeteer"
+  ]
+}
