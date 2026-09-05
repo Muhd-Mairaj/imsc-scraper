@@ -2,11 +2,12 @@
 node_modules/
 
 # Build output
-dist/
+build/
 *.tsbuildinfo
 
-# Local WhatsApp credentials and selected group configuration
+# Local WhatsApp credentials, configuration, and web cache
 data/
+.wwebjs_cache/
 
 # Local environment files
 .env

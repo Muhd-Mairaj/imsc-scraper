@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "bun run src/index.ts",
     "build": "tsc --project tsconfig.json",
-    "start": "bun run dist/index.js",
+    "start": "bun run build/index.js",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "format": "biome format --write .",
     "lint": "biome lint .",
