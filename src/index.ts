@@ -2,6 +2,7 @@ import select from "@inquirer/select";
 import qrcode from "qrcode-terminal";
 import WAWebJS from "whatsapp-web.js";
 import { authDirectory, configFilePath, type SelectedChatConfig, saveConfig } from "./config.js";
+import { listWhatsAppGroups, type WhatsAppGroupBrowserClient } from "./whatsapp.js";
 
 const { Client, LocalAuth } = WAWebJS;
 
@@ -17,35 +18,18 @@ function waitForClientReady(client: WAWebJS.Client): Promise<void> {
   });
 }
 
-function isGroupChat(chat: WAWebJS.Chat): chat is WAWebJS.GroupChat {
-  return chat.isGroup;
-}
-
 async function chooseGroup(client: WAWebJS.Client): Promise<SelectedChatConfig> {
-  const chats = await client.getChats();
-  const groups = chats.filter(isGroupChat).sort((left, right) => {
-    const nameComparison = left.name.localeCompare(right.name);
-    return nameComparison || left.id._serialized.localeCompare(right.id._serialized);
-  });
-
+  const groups = await listWhatsAppGroups(client as unknown as WhatsAppGroupBrowserClient);
   if (groups.length === 0) {
     throw new Error("No WhatsApp groups were found for this account.");
   }
-
   return select({
     message: "Choose the Community announcements group:",
-    choices: groups.map((group) => {
-      const name = group.name.trim() || "Unnamed group";
-
-      return {
-        name,
-        value: {
-          id: group.id._serialized,
-          name,
-        },
-        description: group.id._serialized,
-      };
-    }),
+    choices: groups.map((group) => ({
+      name: group.name,
+      value: group,
+      description: group.id,
+    })),
     pageSize: Math.min(groups.length, 15),
     loop: false,
   });
