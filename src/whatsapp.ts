@@ -65,3 +65,10 @@ export async function listWhatsAppGroups(
   }
   return Object.freeze([...unique.values()].sort(compareGroups));
 }
+
+export async function findWhatsAppGroup(
+  client: WhatsAppGroupBrowserClient,
+  chatId: string,
+): Promise<WhatsAppGroupReference | undefined> {
+  return (await listWhatsAppGroups(client)).find((group) => group.id === chatId);
+}
