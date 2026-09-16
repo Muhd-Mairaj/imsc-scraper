@@ -9,6 +9,15 @@ export interface WhatsAppGroupBrowserClient {
   };
 }
 
+export interface WhatsAppGroupHistoryProbe {
+  readonly group: WhatsAppGroupReference;
+  readonly loadedMessageCountBefore: number;
+  readonly newlyLoadedMessageCount: number | undefined;
+  readonly loadedMessageCountAfter: number;
+  readonly oldestLoadedTimestampMs: number | undefined;
+  readonly newestLoadedTimestampMs: number | undefined;
+}
+
 function normalizedGroup(value: unknown): WhatsAppGroupReference | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const fields = value as Readonly<Record<string, unknown>>;
@@ -66,9 +75,90 @@ export async function listWhatsAppGroups(
   return Object.freeze([...unique.values()].sort(compareGroups));
 }
 
-export async function findWhatsAppGroup(
+export async function probeWhatsAppGroupHistory(
   client: WhatsAppGroupBrowserClient,
   chatId: string,
-): Promise<WhatsAppGroupReference | undefined> {
-  return (await listWhatsAppGroups(client)).find((group) => group.id === chatId);
+): Promise<WhatsAppGroupHistoryProbe | undefined> {
+  const page = client.pupPage as unknown as {
+    readonly evaluate: <T, A>(
+      pageFunction: (argument: A) => T | Promise<T>,
+      argument: A,
+    ) => Promise<T>;
+  };
+  const result = await page.evaluate(async (requestedChatId) => {
+    const browser = globalThis as unknown as {
+      readonly require: (moduleName: string) => unknown;
+    };
+    const collections = browser.require("WAWebCollections") as {
+      readonly Chat: {
+        readonly getModelsArray: () => readonly Record<string, unknown>[];
+      };
+    };
+    const chat = collections.Chat.getModelsArray().find(
+      (candidate) =>
+        (candidate.id as { readonly _serialized?: unknown } | undefined)?._serialized ===
+        requestedChatId,
+    );
+    if (chat === undefined || (chat.isGroup !== true && chat.groupMetadata === undefined)) {
+      return undefined;
+    }
+
+    const messages = chat.msgs as {
+      readonly getModelsArray?: () => readonly Record<string, unknown>[];
+    };
+    if (messages?.getModelsArray === undefined) return undefined;
+    const before = messages.getModelsArray();
+    const loader = browser.require("WAWebChatLoadMessages") as {
+      readonly loadEarlierMsgs: (input: {
+        readonly chat: Record<string, unknown>;
+      }) => Promise<unknown>;
+    };
+    const loaded = await loader.loadEarlierMsgs({ chat });
+    const after = messages.getModelsArray();
+    const timestamps = after.flatMap((message) =>
+      typeof message.t === "number" && Number.isFinite(message.t) ? [message.t * 1_000] : [],
+    );
+    return {
+      id: (chat.id as { readonly _serialized?: unknown } | undefined)?._serialized,
+      name:
+        typeof chat.formattedTitle === "string"
+          ? chat.formattedTitle
+          : typeof chat.name === "string"
+            ? chat.name
+            : "",
+      loadedMessageCountBefore: before.length,
+      newlyLoadedMessageCount: Array.isArray(loaded) ? loaded.length : undefined,
+      loadedMessageCountAfter: after.length,
+      oldestLoadedTimestampMs: timestamps.length === 0 ? undefined : Math.min(...timestamps),
+      newestLoadedTimestampMs: timestamps.length === 0 ? undefined : Math.max(...timestamps),
+    };
+  }, chatId);
+  if (result === undefined) return undefined;
+
+  const group = normalizedGroup(result);
+  if (group === undefined) return undefined;
+  const fields = result as Readonly<Record<string, unknown>>;
+  if (
+    typeof fields.loadedMessageCountBefore !== "number" ||
+    typeof fields.loadedMessageCountAfter !== "number"
+  ) {
+    return undefined;
+  }
+  return Object.freeze({
+    group,
+    loadedMessageCountBefore: fields.loadedMessageCountBefore,
+    newlyLoadedMessageCount:
+      typeof fields.newlyLoadedMessageCount === "number"
+        ? fields.newlyLoadedMessageCount
+        : undefined,
+    loadedMessageCountAfter: fields.loadedMessageCountAfter,
+    oldestLoadedTimestampMs:
+      typeof fields.oldestLoadedTimestampMs === "number"
+        ? fields.oldestLoadedTimestampMs
+        : undefined,
+    newestLoadedTimestampMs:
+      typeof fields.newestLoadedTimestampMs === "number"
+        ? fields.newestLoadedTimestampMs
+        : undefined,
+  });
 }

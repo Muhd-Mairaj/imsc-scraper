@@ -9,8 +9,8 @@ import {
   saveConfig,
 } from "./config.js";
 import {
-  findWhatsAppGroup,
   listWhatsAppGroups,
+  probeWhatsAppGroupHistory,
   type WhatsAppGroupBrowserClient,
 } from "./whatsapp.js";
 
@@ -64,14 +64,28 @@ async function verifySelectedChat(client: WAWebJS.Client): Promise<void> {
     throw new Error("WhatsApp Web did not provide a browser page for selected chat verification.");
   }
   const config = await loadConfig();
-  const group = await findWhatsAppGroup(
+  const probe = await probeWhatsAppGroupHistory(
     { pupPage: client.pupPage } as WhatsAppGroupBrowserClient,
     config.selectedChat.id,
   );
-  if (group === undefined) {
-    throw new Error(`The selected chat ${config.selectedChat.id} is not available.`);
+  if (probe === undefined) {
+    throw new Error(`Selected chat metadata is not available for ${config.selectedChat.id}.`);
   }
-  console.log(`Selected chat is available: ${group.name}`);
+
+  console.log(`Selected chat is available: ${probe.group.name}`);
+  console.log(`Loaded messages before request: ${probe.loadedMessageCountBefore}`);
+  console.log(`Earlier messages returned: ${probe.newlyLoadedMessageCount ?? "unavailable"}`);
+  console.log(`Loaded messages after request: ${probe.loadedMessageCountAfter}`);
+  if (probe.oldestLoadedTimestampMs !== undefined) {
+    console.log(
+      `Oldest loaded timestamp: ${new Date(probe.oldestLoadedTimestampMs).toISOString()}`,
+    );
+  }
+  if (probe.newestLoadedTimestampMs !== undefined) {
+    console.log(
+      `Newest loaded timestamp: ${new Date(probe.newestLoadedTimestampMs).toISOString()}`,
+    );
+  }
 }
 
 async function main(): Promise<void> {
