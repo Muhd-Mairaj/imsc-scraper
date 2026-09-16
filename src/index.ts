@@ -9,6 +9,7 @@ import {
   saveConfig,
 } from "./config.js";
 import {
+  discoverWhatsAppWeeklyMarkers,
   listWhatsAppGroups,
   probeWhatsAppGroupHistory,
   type WhatsAppGroupBrowserClient,
@@ -59,32 +60,53 @@ async function runSetup(client: WAWebJS.Client): Promise<void> {
   console.log(`Saved “${selectedChat.name}” to ${configFilePath}`);
 }
 
+function currentMonthStartMs(now: Date): number {
+  return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+}
+
+function formatLocalDate(timestampMs: number): string {
+  const date = new Date(timestampMs);
+  return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
+}
+
 async function verifySelectedChat(client: WAWebJS.Client): Promise<void> {
   if (client.pupPage === undefined) {
     throw new Error("WhatsApp Web did not provide a browser page for selected chat verification.");
   }
   const config = await loadConfig();
-  const probe = await probeWhatsAppGroupHistory(
-    { pupPage: client.pupPage } as WhatsAppGroupBrowserClient,
-    config.selectedChat.id,
-  );
+  const browserClient = { pupPage: client.pupPage } as WhatsAppGroupBrowserClient;
+  const probe = await probeWhatsAppGroupHistory(browserClient, config.selectedChat.id);
   if (probe === undefined) {
     throw new Error(`Selected chat metadata is not available for ${config.selectedChat.id}.`);
   }
+  const now = new Date();
+  const rangeStartMs = currentMonthStartMs(now);
+  const markers = await discoverWhatsAppWeeklyMarkers(browserClient, {
+    chatId: config.selectedChat.id,
+    rangeStartMs,
+    rangeEndMs: now.getTime(),
+  });
 
   console.log(`Selected chat is available: ${probe.group.name}`);
   console.log(`Loaded messages before request: ${probe.loadedMessageCountBefore}`);
   console.log(`Earlier messages returned: ${probe.newlyLoadedMessageCount ?? "unavailable"}`);
   console.log(`Loaded messages after request: ${probe.loadedMessageCountAfter}`);
-  if (probe.oldestLoadedTimestampMs !== undefined) {
+  console.log(
+    `History reaches current month start: ${
+      probe.oldestLoadedTimestampMs !== undefined && probe.oldestLoadedTimestampMs <= rangeStartMs
+        ? "yes"
+        : "no"
+    }`,
+  );
+  console.log(`Weekly-marker candidates: ${markers.length}`);
+  for (const marker of markers) {
+    console.log(`- ${formatLocalDate(marker.markerTimestampMs)} ${marker.markerText}`);
     console.log(
-      `Oldest loaded timestamp: ${new Date(probe.oldestLoadedTimestampMs).toISOString()}`,
+      `  following item: ${formatLocalDate(marker.followingTimestampMs)} ${marker.followingType}`,
     );
-  }
-  if (probe.newestLoadedTimestampMs !== undefined) {
-    console.log(
-      `Newest loaded timestamp: ${new Date(probe.newestLoadedTimestampMs).toISOString()}`,
-    );
+    if (marker.recoveredAfterRevoked) {
+      console.log("  recovered replacement after revoked item");
+    }
   }
 }
 

@@ -162,3 +162,123 @@ export async function probeWhatsAppGroupHistory(
         : undefined,
   });
 }
+
+export interface WhatsAppWeeklyMarkerCandidate {
+  readonly markerTimestampMs: number;
+  readonly markerText: string;
+  readonly followingTimestampMs: number;
+  readonly followingType: string;
+  readonly recoveredAfterRevoked: boolean;
+}
+
+export async function discoverWhatsAppWeeklyMarkers(
+  client: WhatsAppGroupBrowserClient,
+  input: Readonly<{
+    chatId: string;
+    rangeStartMs: number;
+    rangeEndMs: number;
+  }>,
+): Promise<readonly WhatsAppWeeklyMarkerCandidate[]> {
+  const page = client.pupPage as unknown as {
+    readonly evaluate: <T, A>(
+      pageFunction: (argument: A) => T | Promise<T>,
+      argument: A,
+    ) => Promise<T>;
+  };
+  const candidates = await page.evaluate((range) => {
+    const browser = globalThis as unknown as {
+      readonly require: (moduleName: string) => unknown;
+    };
+    const collections = browser.require("WAWebCollections") as {
+      readonly Chat: {
+        readonly getModelsArray: () => readonly Record<string, unknown>[];
+      };
+    };
+    const chat = collections.Chat.getModelsArray().find(
+      (candidate) =>
+        (candidate.id as { readonly _serialized?: unknown } | undefined)?._serialized ===
+        range.chatId,
+    );
+    if (chat === undefined) return [];
+
+    const messages = chat.msgs as {
+      readonly getModelsArray?: () => readonly Record<string, unknown>[];
+    };
+    if (messages?.getModelsArray === undefined) return [];
+    const ordered = [...messages.getModelsArray()].sort(
+      (left, right) =>
+        (typeof left.t === "number" ? left.t : 0) - (typeof right.t === "number" ? right.t : 0),
+    );
+    const normalizedText = (message: Readonly<Record<string, unknown>>): string | undefined =>
+      typeof message.body === "string" ? message.body.trim().replaceAll(/\s+/gu, " ") : undefined;
+    const isWeeklyTitle = (message: Readonly<Record<string, unknown>>): boolean => {
+      const title = normalizedText(message)?.match(/\*([^*]+)\*/u)?.[1];
+      return title !== undefined && /\bbi\s*-?\s*weekly\b|\bweekly\b/iu.test(title);
+    };
+
+    return ordered.flatMap((marker, index) => {
+      if (!isWeeklyTitle(marker)) return [];
+      const markerText = normalizedText(marker);
+      const markerTimestampMs = typeof marker.t === "number" ? marker.t * 1_000 : undefined;
+      let following = ordered[index + 1];
+      let recoveredAfterRevoked = false;
+      if (following?.type === "revoked" && markerTimestampMs !== undefined) {
+        const markerDate = new Date(markerTimestampMs).toDateString();
+        for (
+          let replacementIndex = index + 2;
+          replacementIndex < ordered.length;
+          replacementIndex += 1
+        ) {
+          const replacement = ordered[replacementIndex];
+          const replacementTimestampMs =
+            typeof replacement?.t === "number" ? replacement.t * 1_000 : undefined;
+          if (
+            replacement === undefined ||
+            replacementTimestampMs === undefined ||
+            new Date(replacementTimestampMs).toDateString() !== markerDate ||
+            isWeeklyTitle(replacement)
+          ) {
+            break;
+          }
+          if (replacement.type !== "revoked") {
+            following = replacement;
+            recoveredAfterRevoked = true;
+            break;
+          }
+        }
+      }
+      const followingTimestampMs =
+        typeof following?.t === "number" ? following.t * 1_000 : undefined;
+      if (
+        following === undefined ||
+        markerText === undefined ||
+        markerTimestampMs === undefined ||
+        followingTimestampMs === undefined ||
+        followingTimestampMs < range.rangeStartMs ||
+        followingTimestampMs > range.rangeEndMs
+      ) {
+        return [];
+      }
+      return [
+        {
+          markerTimestampMs,
+          markerText,
+          followingTimestampMs,
+          followingType: typeof following.type === "string" ? following.type : "unknown",
+          recoveredAfterRevoked,
+        },
+      ];
+    });
+  }, input);
+
+  return Object.freeze(
+    candidates.filter(
+      (candidate): candidate is WhatsAppWeeklyMarkerCandidate =>
+        typeof candidate.markerTimestampMs === "number" &&
+        typeof candidate.markerText === "string" &&
+        typeof candidate.followingTimestampMs === "number" &&
+        typeof candidate.followingType === "string" &&
+        typeof candidate.recoveredAfterRevoked === "boolean",
+    ),
+  );
+}
