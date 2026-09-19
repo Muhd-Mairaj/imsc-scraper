@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import select from "@inquirer/select";
@@ -7,6 +8,7 @@ import {
   authDirectory,
   configFilePath,
   loadConfig,
+  monthlySummaryFilePath,
   type SelectedChatConfig,
   saveConfig,
 } from "./config.js";
@@ -186,7 +188,9 @@ async function verifySelectedChat(client: WAWebJS.Client): Promise<void> {
     }
   }
 
-  stdout.write(renderMonthlyActivitySummary(items, warnings));
+  const summary = renderMonthlyActivitySummary(items, warnings);
+  stdout.write(summary);
+  await writeFile(monthlySummaryFilePath(now), summary, { encoding: "utf8", mode: 0o600 });
 }
 
 async function main(): Promise<void> {

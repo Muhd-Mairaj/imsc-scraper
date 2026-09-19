@@ -90,3 +90,10 @@ export async function loadConfig(): Promise<AppConfig> {
     ),
   };
 }
+
+export function monthlySummaryFilePath(now: Date): string {
+  return join(
+    dataDirectory,
+    `monthly-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}.txt`,
+  );
+}
