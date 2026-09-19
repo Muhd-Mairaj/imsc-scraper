@@ -17,6 +17,7 @@ import {
   probeWhatsAppPollParticipants,
   probeWhatsAppReactionParticipants,
   type WhatsAppGroupBrowserClient,
+  type WhatsAppParticipant,
 } from "./whatsapp.js";
 
 const { Client, LocalAuth } = WAWebJS;
@@ -80,6 +81,20 @@ async function runSetup(client: WAWebJS.Client): Promise<void> {
   console.log(`Saved “${selectedChat.name}” to ${configFilePath}`);
 }
 
+function eligibleParticipants(
+  participants: readonly WhatsAppParticipant[],
+  ignoredPhoneNumbers: readonly string[],
+): Readonly<{ participants: readonly WhatsAppParticipant[]; ignoredCount: number }> {
+  const ignored = new Set(ignoredPhoneNumbers);
+  const eligible = participants.filter(
+    (participant) => participant.phoneNumber === undefined || !ignored.has(participant.phoneNumber),
+  );
+  return Object.freeze({
+    participants: Object.freeze(eligible),
+    ignoredCount: participants.length - eligible.length,
+  });
+}
+
 function currentMonthStartMs(now: Date): number {
   return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
 }
@@ -140,6 +155,14 @@ async function verifySelectedChat(client: WAWebJS.Client): Promise<void> {
       "Reaction participant details are not available for the newest paired non-poll item.",
     );
   }
+  const eligiblePollParticipants = eligibleParticipants(
+    pollParticipants.participants,
+    config.ignoredPhoneNumbers,
+  );
+  const eligibleReactionParticipants = eligibleParticipants(
+    reactionParticipants.participants,
+    config.ignoredPhoneNumbers,
+  );
 
   console.log(`Selected chat is available: ${probe.group.name}`);
   console.log(`Loaded messages before request: ${probe.loadedMessageCountBefore}`);
@@ -164,9 +187,10 @@ async function verifySelectedChat(client: WAWebJS.Client): Promise<void> {
   }
   console.log(`Newest poll candidate: ${formatLocalDate(newestPoll.followingTimestampMs)}`);
   console.log(`Poll vote records: ${pollParticipants.voteRecordCount}`);
-  console.log("Poll participants:");
-  for (const display of pollParticipants.participantDisplays) {
-    console.log(display);
+  console.log(`Ignored admin matches: ${eligiblePollParticipants.ignoredCount}`);
+  console.log("Eligible poll participants:");
+  for (const participant of eligiblePollParticipants.participants) {
+    console.log(participant.display);
   }
   if (pollParticipants.unresolvedParticipantCount > 0) {
     console.log(`Unresolved participants: ${pollParticipants.unresolvedParticipantCount}`);
@@ -175,9 +199,10 @@ async function verifySelectedChat(client: WAWebJS.Client): Promise<void> {
     `Newest non-poll candidate: ${formatLocalDate(newestPost.followingTimestampMs)} ${newestPost.followingType}`,
   );
   console.log(`Reaction sender records: ${reactionParticipants.reactionSenderRecordCount}`);
-  console.log("Post participants:");
-  for (const display of reactionParticipants.participantDisplays) {
-    console.log(display);
+  console.log(`Ignored admin matches: ${eligibleReactionParticipants.ignoredCount}`);
+  console.log("Eligible post participants:");
+  for (const participant of eligibleReactionParticipants.participants) {
+    console.log(participant.display);
   }
   if (reactionParticipants.unresolvedParticipantCount > 0) {
     console.log(`Unresolved post participants: ${reactionParticipants.unresolvedParticipantCount}`);

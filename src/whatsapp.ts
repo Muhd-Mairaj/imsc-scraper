@@ -286,9 +286,32 @@ export async function discoverWhatsAppWeeklyMarkers(
   );
 }
 
+export interface WhatsAppParticipant {
+  readonly display: string;
+  readonly phoneNumber: string | undefined;
+}
+
+function participantRecords(value: unknown): readonly WhatsAppParticipant[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const participants = value.flatMap((participant) => {
+    if (typeof participant !== "object" || participant === null || Array.isArray(participant)) {
+      return [];
+    }
+    const fields = participant as Readonly<Record<string, unknown>>;
+    if (
+      typeof fields.display !== "string" ||
+      (fields.phoneNumber !== undefined && typeof fields.phoneNumber !== "string")
+    ) {
+      return [];
+    }
+    return [{ display: fields.display, phoneNumber: fields.phoneNumber }];
+  });
+  return participants.length === value.length ? Object.freeze(participants) : undefined;
+}
+
 export interface WhatsAppPollParticipantProbe {
   readonly voteRecordCount: number;
-  readonly participantDisplays: readonly string[];
+  readonly participants: readonly WhatsAppParticipant[];
   readonly unresolvedParticipantCount: number;
 }
 
@@ -330,7 +353,7 @@ export async function probeWhatsAppPollParticipants(
         return typeof sender?.toString === "function" ? [sender.toString()] : [];
       }),
     );
-    const displays: string[] = [];
+    const participants: { display: string; phoneNumber: string | undefined }[] = [];
     let unresolvedParticipantCount = 0;
     for (const participantKey of participantKeys) {
       try {
@@ -347,10 +370,6 @@ export async function probeWhatsAppPollParticipants(
           }
         ).Contact.find(wid);
         const username = typeof contact?.username === "string" ? contact.username.trim() : "";
-        if (username.length > 0) {
-          displays.push(username.startsWith("@") ? username : `@${username}`);
-          continue;
-        }
         const directPhone = contact?.phoneNumber;
         const phoneValue =
           directPhone ??
@@ -368,43 +387,61 @@ export async function probeWhatsAppPollParticipants(
                   "function"
                 ? (phoneValue as { readonly toString: () => string }).toString()
                 : "";
-        const digits = phoneText.replaceAll(/\D/gu, "");
-        if (digits.length > 0) {
-          displays.push(`+${digits}`);
-        } else {
+        const phoneNumber = phoneText.replaceAll(/\D/gu, "") || undefined;
+        const display =
+          username.length > 0
+            ? username.startsWith("@")
+              ? username
+              : `@${username}`
+            : phoneNumber === undefined
+              ? undefined
+              : `+${phoneNumber}`;
+        if (display === undefined) {
           unresolvedParticipantCount += 1;
+        } else {
+          participants.push({ display, phoneNumber });
         }
       } catch {
         unresolvedParticipantCount += 1;
       }
     }
+    const participantsByDisplay = new Map<
+      string,
+      { display: string; phoneNumber: string | undefined }
+    >();
+    for (const participant of participants) {
+      participantsByDisplay.set(participant.display, participant);
+    }
+    const sortedParticipants = [...participantsByDisplay.values()].sort((left, right) =>
+      left.display.localeCompare(right.display),
+    );
     return {
       voteRecordCount: voteRows.length,
-      participantDisplays: [...new Set(displays)].sort((left, right) => left.localeCompare(right)),
+      participants: sortedParticipants,
       unresolvedParticipantCount,
     };
   }, pollMessageId);
   if (result === undefined) return undefined;
 
   const fields = result as Readonly<Record<string, unknown>>;
+  const participants = participantRecords(fields.participants);
   if (
     typeof fields.voteRecordCount !== "number" ||
-    !Array.isArray(fields.participantDisplays) ||
-    typeof fields.unresolvedParticipantCount !== "number" ||
-    fields.participantDisplays.some((display) => typeof display !== "string")
+    participants === undefined ||
+    typeof fields.unresolvedParticipantCount !== "number"
   ) {
     return undefined;
   }
   return Object.freeze({
     voteRecordCount: fields.voteRecordCount,
-    participantDisplays: Object.freeze([...fields.participantDisplays]),
+    participants,
     unresolvedParticipantCount: fields.unresolvedParticipantCount,
   });
 }
 
 export interface WhatsAppReactionParticipantProbe {
   readonly reactionSenderRecordCount: number;
-  readonly participantDisplays: readonly string[];
+  readonly participants: readonly WhatsAppParticipant[];
   readonly unresolvedParticipantCount: number;
 }
 
@@ -451,7 +488,7 @@ export async function probeWhatsAppReactionParticipants(
       }),
     );
 
-    const displays: string[] = [];
+    const participants: { display: string; phoneNumber: string | undefined }[] = [];
     let unresolvedParticipantCount = 0;
     for (const participantKey of participantKeys) {
       try {
@@ -468,10 +505,6 @@ export async function probeWhatsAppReactionParticipants(
           }
         ).Contact.find(wid);
         const username = typeof contact?.username === "string" ? contact.username.trim() : "";
-        if (username.length > 0) {
-          displays.push(username.startsWith("@") ? username : `@${username}`);
-          continue;
-        }
         const directPhone = contact?.phoneNumber;
         const phoneValue =
           directPhone ??
@@ -489,36 +522,54 @@ export async function probeWhatsAppReactionParticipants(
                   "function"
                 ? (phoneValue as { readonly toString: () => string }).toString()
                 : "";
-        const digits = phoneText.replaceAll(/\D/gu, "");
-        if (digits.length > 0) {
-          displays.push(`+${digits}`);
-        } else {
+        const phoneNumber = phoneText.replaceAll(/\D/gu, "") || undefined;
+        const display =
+          username.length > 0
+            ? username.startsWith("@")
+              ? username
+              : `@${username}`
+            : phoneNumber === undefined
+              ? undefined
+              : `+${phoneNumber}`;
+        if (display === undefined) {
           unresolvedParticipantCount += 1;
+        } else {
+          participants.push({ display, phoneNumber });
         }
       } catch {
         unresolvedParticipantCount += 1;
       }
     }
+    const participantsByDisplay = new Map<
+      string,
+      { display: string; phoneNumber: string | undefined }
+    >();
+    for (const participant of participants) {
+      participantsByDisplay.set(participant.display, participant);
+    }
+    const sortedParticipants = [...participantsByDisplay.values()].sort((left, right) =>
+      left.display.localeCompare(right.display),
+    );
     return {
       reactionSenderRecordCount: senderRecords.length,
-      participantDisplays: [...new Set(displays)].sort((left, right) => left.localeCompare(right)),
+      participants: sortedParticipants,
       unresolvedParticipantCount,
     };
   }, messageId);
   if (result === undefined) return undefined;
 
   const fields = result as Readonly<Record<string, unknown>>;
+  const participants = participantRecords(fields.participants);
   if (
     typeof fields.reactionSenderRecordCount !== "number" ||
-    !Array.isArray(fields.participantDisplays) ||
-    typeof fields.unresolvedParticipantCount !== "number" ||
-    fields.participantDisplays.some((display) => typeof display !== "string")
+    participants === undefined ||
+    typeof fields.unresolvedParticipantCount !== "number"
   ) {
     return undefined;
   }
   return Object.freeze({
     reactionSenderRecordCount: fields.reactionSenderRecordCount,
-    participantDisplays: Object.freeze([...fields.participantDisplays]),
+    participants,
     unresolvedParticipantCount: fields.unresolvedParticipantCount,
   });
 }
