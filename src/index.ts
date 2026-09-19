@@ -1,3 +1,5 @@
+import { stdin, stdout } from "node:process";
+import { createInterface } from "node:readline/promises";
 import select from "@inquirer/select";
 import qrcode from "qrcode-terminal";
 import WAWebJS from "whatsapp-web.js";
@@ -55,10 +57,26 @@ async function chooseGroup(client: WAWebJS.Client): Promise<SelectedChatConfig> 
   });
 }
 
+async function promptIgnoredPhoneNumbers(): Promise<readonly string[]> {
+  const readline = createInterface({ input: stdin, output: stdout });
+  const values: string[] = [];
+  try {
+    console.log("Enter ignored admin phone numbers in international format, one per line.");
+    while (true) {
+      const value = await readline.question("Ignored phone number (blank to finish): ");
+      if (value.trim().length === 0) return values;
+      values.push(value);
+    }
+  } finally {
+    readline.close();
+  }
+}
+
 async function runSetup(client: WAWebJS.Client): Promise<void> {
   console.log("WhatsApp Web is ready. Loading groups...");
   const selectedChat = await chooseGroup(client);
-  await saveConfig({ selectedChat });
+  const ignoredPhoneNumbers = await promptIgnoredPhoneNumbers();
+  await saveConfig({ selectedChat, ignoredPhoneNumbers });
   console.log(`Saved “${selectedChat.name}” to ${configFilePath}`);
 }
 

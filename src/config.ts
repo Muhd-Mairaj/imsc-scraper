@@ -8,17 +8,29 @@ export interface SelectedChatConfig {
 
 export interface AppConfig {
   selectedChat: SelectedChatConfig;
+  ignoredPhoneNumbers: readonly string[];
 }
 
 export const dataDirectory = resolve(process.cwd(), "data");
 export const authDirectory = join(dataDirectory, "auth");
 export const configFilePath = join(dataDirectory, "config.json");
 
+export function normalizePhoneNumbers(values: readonly string[]): readonly string[] {
+  return [...new Set(values.map((value) => value.replaceAll(/\D/gu, "")).filter(Boolean))];
+}
+
 export async function saveConfig(config: AppConfig): Promise<void> {
   await mkdir(dirname(configFilePath), { recursive: true, mode: 0o700 });
 
   const temporaryPath = `${configFilePath}.${process.pid}.tmp`;
-  const serializedConfig = `${JSON.stringify(config, null, 2)}\n`;
+  const serializedConfig = `${JSON.stringify(
+    {
+      selectedChat: config.selectedChat,
+      ignoredPhoneNumbers: normalizePhoneNumbers(config.ignoredPhoneNumbers),
+    },
+    null,
+    2,
+  )}\n`;
 
   await writeFile(temporaryPath, serializedConfig, { encoding: "utf8", mode: 0o600 });
   await rename(temporaryPath, configFilePath);
@@ -50,20 +62,31 @@ export async function loadConfig(): Promise<AppConfig> {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw invalidConfig();
   }
-  const selectedChat = (parsed as Readonly<Record<string, unknown>>).selectedChat;
+  const fields = parsed as Readonly<Record<string, unknown>>;
+  const selectedChat = fields.selectedChat;
   if (typeof selectedChat !== "object" || selectedChat === null || Array.isArray(selectedChat)) {
     throw invalidConfig();
   }
-  const fields = selectedChat as Readonly<Record<string, unknown>>;
+  const selectedChatFields = selectedChat as Readonly<Record<string, unknown>>;
   if (
-    typeof fields.id !== "string" ||
-    fields.id.trim().length === 0 ||
-    typeof fields.name !== "string" ||
-    fields.name.trim().length === 0
+    typeof selectedChatFields.id !== "string" ||
+    selectedChatFields.id.trim().length === 0 ||
+    typeof selectedChatFields.name !== "string" ||
+    selectedChatFields.name.trim().length === 0
+  ) {
+    throw invalidConfig();
+  }
+  if (
+    fields.ignoredPhoneNumbers !== undefined &&
+    (!Array.isArray(fields.ignoredPhoneNumbers) ||
+      fields.ignoredPhoneNumbers.some((phoneNumber) => typeof phoneNumber !== "string"))
   ) {
     throw invalidConfig();
   }
   return {
-    selectedChat: { id: fields.id.trim(), name: fields.name.trim() },
+    selectedChat: { id: selectedChatFields.id.trim(), name: selectedChatFields.name.trim() },
+    ignoredPhoneNumbers: normalizePhoneNumbers(
+      (fields.ignoredPhoneNumbers as readonly string[] | undefined) ?? [],
+    ),
   };
 }
