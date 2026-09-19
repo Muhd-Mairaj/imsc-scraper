@@ -1,6 +1,6 @@
 # IMSC Scraper
 
-An incremental TypeScript CLI for working with a WhatsApp Community announcements group through [whatsapp-web.js](https://wwebjs.dev/).
+A small TypeScript CLI that creates a read-only monthly WhatsApp activity summary for a Community announcements group through [whatsapp-web.js](https://wwebjs.dev/).
 
 ## Prerequisites
 
@@ -22,32 +22,54 @@ Optionally install the repository's Git hook:
 uvx pre-commit install
 ```
 
-## Select the announcements group
-
-Run the CLI from the repository root:
+Configure the announcements group and ignored admin phones:
 
 ```sh
-bun run dev
+bun run dev setup
 ```
 
-On the first run, open **WhatsApp > Linked devices > Link a device** on your phone and scan the QR code shown in the terminal. After WhatsApp finishes loading, select the Community announcements group from the list.
+On the first run, open **WhatsApp > Linked devices > Link a device** on your phone and scan the QR code shown in the terminal. Select the Community announcements group, then enter ignored admin phone numbers in international format, one number per line. Submit a blank line when finished.
 
-The result is stored at `data/config.json`:
+```text
++60 12-345 6789
+60129876543
+
+```
+
+The private configuration is stored at `data/config.json`:
 
 ```json
 {
   "selectedChat": {
     "id": "1234567890@g.us",
     "name": "Community Announcements"
-  }
+  },
+  "ignoredPhoneNumbers": ["60123456789", "60129876543"]
 }
 ```
 
-The linked-device session is stored under `data/auth/`. The entire `data/` directory is ignored by Git and should remain private. Running the command again reuses the session and lets you replace the selected group.
+Phone values are normalized to digits before saving. Running setup again lets you replace both the selected group and the ignored admin list.
+
+## Create the monthly summary
+
+```sh
+bun run dev
+```
+
+The command reads the configured group, prints the current-month activity summary, and writes the identical summary to the private local file:
+
+```text
+data/monthly-YYYY-MM.txt
+```
+
+Poll participation is displayed with activity value `2`; reaction participation is displayed with activity value `1`. Ignored admin phones are excluded. A valid activity item with no eligible participants keeps its date heading. If history, engagement, or identity data is unavailable, the summary prints an explicit warning rather than treating it as zero activity.
+
+The linked-device session, configuration, and monthly output all remain under the ignored `data/` directory and should stay private.
 
 ## Quality commands
 
 ```sh
+bun test
 bun run format
 bun run lint
 bun run check
