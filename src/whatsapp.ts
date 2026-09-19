@@ -169,6 +169,7 @@ export interface WhatsAppWeeklyMarkerCandidate {
   readonly followingTimestampMs: number;
   readonly followingType: string;
   readonly followingMessageId: string | undefined;
+  readonly followingHasReaction: boolean;
   readonly recoveredAfterRevoked: boolean;
 }
 
@@ -268,6 +269,7 @@ export async function discoverWhatsAppWeeklyMarkers(
           followingTimestampMs,
           followingType: typeof following.type === "string" ? following.type : "unknown",
           followingMessageId: followingId?.toString?.(),
+          followingHasReaction: following.hasReaction === true,
           recoveredAfterRevoked,
         },
       ];
@@ -281,6 +283,7 @@ export async function discoverWhatsAppWeeklyMarkers(
         typeof candidate.markerText === "string" &&
         typeof candidate.followingTimestampMs === "number" &&
         typeof candidate.followingType === "string" &&
+        typeof candidate.followingHasReaction === "boolean" &&
         typeof candidate.recoveredAfterRevoked === "boolean",
     ),
   );
@@ -448,7 +451,15 @@ export interface WhatsAppReactionParticipantProbe {
 export async function probeWhatsAppReactionParticipants(
   client: WhatsAppGroupBrowserClient,
   messageId: string,
+  hasReaction: boolean,
 ): Promise<WhatsAppReactionParticipantProbe | undefined> {
+  if (!hasReaction) {
+    return Object.freeze({
+      reactionSenderRecordCount: 0,
+      participants: Object.freeze([]),
+      unresolvedParticipantCount: 0,
+    });
+  }
   const page = client.pupPage as unknown as {
     readonly evaluate: <T, A>(
       pageFunction: (argument: A) => T | Promise<T>,

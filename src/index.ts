@@ -10,6 +10,7 @@ import {
   type SelectedChatConfig,
   saveConfig,
 } from "./config.js";
+import { type MonthlyActivityItem, renderMonthlyActivitySummary } from "./report.js";
 import {
   discoverWhatsAppWeeklyMarkers,
   listWhatsAppGroups,
@@ -121,92 +122,71 @@ async function verifySelectedChat(client: WAWebJS.Client): Promise<void> {
     rangeStartMs,
     rangeEndMs: now.getTime(),
   });
-  const newestPoll = [...markers]
-    .reverse()
-    .find(
-      (marker) =>
-        marker.followingType === "poll_creation" && marker.followingMessageId !== undefined,
-    );
-  if (newestPoll === undefined || newestPoll.followingMessageId === undefined) {
-    throw new Error("No paired poll item was found in the loaded current-month markers.");
+  const items: MonthlyActivityItem[] = [];
+  const warnings: string[] = [];
+  if (probe.oldestLoadedTimestampMs === undefined || probe.oldestLoadedTimestampMs > rangeStartMs) {
+    warnings.push("History may not reach the start of the current month.");
   }
-  const pollParticipants = await probeWhatsAppPollParticipants(
-    browserClient,
-    newestPoll.followingMessageId,
-  );
-  if (pollParticipants === undefined) {
-    throw new Error("Poll participant details are not available for the newest paired poll item.");
-  }
-  const newestPost = [...markers]
-    .reverse()
-    .find(
-      (marker) =>
-        marker.followingType !== "poll_creation" && marker.followingMessageId !== undefined,
-    );
-  if (newestPost === undefined || newestPost.followingMessageId === undefined) {
-    throw new Error("No paired non-poll item was found in the loaded current-month markers.");
-  }
-  const reactionParticipants = await probeWhatsAppReactionParticipants(
-    browserClient,
-    newestPost.followingMessageId,
-  );
-  if (reactionParticipants === undefined) {
-    throw new Error(
-      "Reaction participant details are not available for the newest paired non-poll item.",
-    );
-  }
-  const eligiblePollParticipants = eligibleParticipants(
-    pollParticipants.participants,
-    config.ignoredPhoneNumbers,
-  );
-  const eligibleReactionParticipants = eligibleParticipants(
-    reactionParticipants.participants,
-    config.ignoredPhoneNumbers,
-  );
-
-  console.log(`Selected chat is available: ${probe.group.name}`);
-  console.log(`Loaded messages before request: ${probe.loadedMessageCountBefore}`);
-  console.log(`Earlier messages returned: ${probe.newlyLoadedMessageCount ?? "unavailable"}`);
-  console.log(`Loaded messages after request: ${probe.loadedMessageCountAfter}`);
-  console.log(
-    `History reaches current month start: ${
-      probe.oldestLoadedTimestampMs !== undefined && probe.oldestLoadedTimestampMs <= rangeStartMs
-        ? "yes"
-        : "no"
-    }`,
-  );
-  console.log(`Weekly-marker candidates: ${markers.length}`);
   for (const marker of markers) {
-    console.log(`- ${formatLocalDate(marker.markerTimestampMs)} ${marker.markerText}`);
-    console.log(
-      `  following item: ${formatLocalDate(marker.followingTimestampMs)} ${marker.followingType}`,
-    );
+    const itemDate = formatLocalDate(marker.followingTimestampMs);
+    if (marker.followingMessageId === undefined) {
+      warnings.push(`${itemDate}: engagement is unavailable.`);
+      continue;
+    }
+    if (marker.followingType === "poll_creation") {
+      const pollParticipants = await probeWhatsAppPollParticipants(
+        browserClient,
+        marker.followingMessageId,
+      );
+      if (pollParticipants === undefined) {
+        warnings.push(`${itemDate}: poll vote records are unavailable.`);
+        continue;
+      }
+      const eligible = eligibleParticipants(
+        pollParticipants.participants,
+        config.ignoredPhoneNumbers,
+      );
+      items.push({
+        timestampMs: marker.followingTimestampMs,
+        activity: 2,
+        participantDisplays: eligible.participants.map((participant) => participant.display),
+      });
+      if (pollParticipants.unresolvedParticipantCount > 0) {
+        warnings.push(
+          `${itemDate}: ${pollParticipants.unresolvedParticipantCount} poll participant identities are unavailable.`,
+        );
+      }
+    } else {
+      const reactionParticipants = await probeWhatsAppReactionParticipants(
+        browserClient,
+        marker.followingMessageId,
+        marker.followingHasReaction,
+      );
+      if (reactionParticipants === undefined) {
+        warnings.push(`${itemDate}: reaction sender records are unavailable.`);
+        continue;
+      }
+      const eligible = eligibleParticipants(
+        reactionParticipants.participants,
+        config.ignoredPhoneNumbers,
+      );
+      items.push({
+        timestampMs: marker.followingTimestampMs,
+        activity: 1,
+        participantDisplays: eligible.participants.map((participant) => participant.display),
+      });
+      if (reactionParticipants.unresolvedParticipantCount > 0) {
+        warnings.push(
+          `${itemDate}: ${reactionParticipants.unresolvedParticipantCount} reaction participant identities are unavailable.`,
+        );
+      }
+    }
     if (marker.recoveredAfterRevoked) {
-      console.log("  recovered replacement after revoked item");
+      warnings.push(`${itemDate}: uses a same-day replacement after a revoked item.`);
     }
   }
-  console.log(`Newest poll candidate: ${formatLocalDate(newestPoll.followingTimestampMs)}`);
-  console.log(`Poll vote records: ${pollParticipants.voteRecordCount}`);
-  console.log(`Ignored admin matches: ${eligiblePollParticipants.ignoredCount}`);
-  console.log("Eligible poll participants:");
-  for (const participant of eligiblePollParticipants.participants) {
-    console.log(participant.display);
-  }
-  if (pollParticipants.unresolvedParticipantCount > 0) {
-    console.log(`Unresolved participants: ${pollParticipants.unresolvedParticipantCount}`);
-  }
-  console.log(
-    `Newest non-poll candidate: ${formatLocalDate(newestPost.followingTimestampMs)} ${newestPost.followingType}`,
-  );
-  console.log(`Reaction sender records: ${reactionParticipants.reactionSenderRecordCount}`);
-  console.log(`Ignored admin matches: ${eligibleReactionParticipants.ignoredCount}`);
-  console.log("Eligible post participants:");
-  for (const participant of eligibleReactionParticipants.participants) {
-    console.log(participant.display);
-  }
-  if (reactionParticipants.unresolvedParticipantCount > 0) {
-    console.log(`Unresolved post participants: ${reactionParticipants.unresolvedParticipantCount}`);
-  }
+
+  stdout.write(renderMonthlyActivitySummary(items, warnings));
 }
 
 async function main(): Promise<void> {
