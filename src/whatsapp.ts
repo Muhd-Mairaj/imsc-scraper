@@ -168,6 +168,7 @@ export interface WhatsAppWeeklyMarkerCandidate {
   readonly markerText: string;
   readonly followingTimestampMs: number;
   readonly followingType: string;
+  readonly followingMessageId: string | undefined;
   readonly recoveredAfterRevoked: boolean;
 }
 
@@ -249,6 +250,7 @@ export async function discoverWhatsAppWeeklyMarkers(
       }
       const followingTimestampMs =
         typeof following?.t === "number" ? following.t * 1_000 : undefined;
+      const followingId = following?.id as { readonly toString?: () => string } | undefined;
       if (
         following === undefined ||
         markerText === undefined ||
@@ -265,6 +267,7 @@ export async function discoverWhatsAppWeeklyMarkers(
           markerText,
           followingTimestampMs,
           followingType: typeof following.type === "string" ? following.type : "unknown",
+          followingMessageId: followingId?.toString?.(),
           recoveredAfterRevoked,
         },
       ];
@@ -281,4 +284,241 @@ export async function discoverWhatsAppWeeklyMarkers(
         typeof candidate.recoveredAfterRevoked === "boolean",
     ),
   );
+}
+
+export interface WhatsAppPollParticipantProbe {
+  readonly voteRecordCount: number;
+  readonly participantDisplays: readonly string[];
+  readonly unresolvedParticipantCount: number;
+}
+
+export async function probeWhatsAppPollParticipants(
+  client: WhatsAppGroupBrowserClient,
+  pollMessageId: string,
+): Promise<WhatsAppPollParticipantProbe | undefined> {
+  const page = client.pupPage as unknown as {
+    readonly evaluate: <T, A>(
+      pageFunction: (argument: A) => T | Promise<T>,
+      argument: A,
+    ) => Promise<T>;
+  };
+  const result = await page.evaluate(async (messageId) => {
+    const browser = globalThis as unknown as {
+      readonly require: (moduleName: string) => unknown;
+    };
+    const messageKey = (
+      browser.require("WAWebMsgKey") as {
+        readonly fromString: (value: string) => { readonly toString: () => string };
+      }
+    ).fromString(messageId);
+    const voteRows = await (
+      browser.require("WAWebPollsVotesSchema") as {
+        readonly getTable: () => {
+          readonly equals: (columns: readonly string[], value: string) => Promise<unknown>;
+        };
+      }
+    )
+      .getTable()
+      .equals(["parentMsgKey"], messageKey.toString());
+    if (!Array.isArray(voteRows)) return undefined;
+
+    const participantKeys = new Set(
+      voteRows.flatMap((row) => {
+        const sender = (row as { readonly sender?: unknown }).sender as
+          | { readonly toString?: () => string }
+          | undefined;
+        return typeof sender?.toString === "function" ? [sender.toString()] : [];
+      }),
+    );
+    const displays: string[] = [];
+    let unresolvedParticipantCount = 0;
+    for (const participantKey of participantKeys) {
+      try {
+        const wid = (
+          browser.require("WAWebWidFactory") as {
+            readonly createWid: (value: string) => unknown;
+          }
+        ).createWid(participantKey);
+        const contact = await (
+          browser.require("WAWebCollections") as {
+            readonly Contact: {
+              readonly find: (value: unknown) => Promise<Record<string, unknown>>;
+            };
+          }
+        ).Contact.find(wid);
+        const username = typeof contact?.username === "string" ? contact.username.trim() : "";
+        if (username.length > 0) {
+          displays.push(username.startsWith("@") ? username : `@${username}`);
+          continue;
+        }
+        const directPhone = contact?.phoneNumber;
+        const phoneValue =
+          directPhone ??
+          (
+            browser.require("WAWebApiContact") as {
+              readonly getPhoneNumber: (value: unknown) => unknown;
+            }
+          ).getPhoneNumber(wid);
+        const phoneText =
+          typeof phoneValue === "string"
+            ? phoneValue
+            : typeof (phoneValue as { readonly user?: unknown } | undefined)?.user === "string"
+              ? (phoneValue as { readonly user: string }).user
+              : typeof (phoneValue as { readonly toString?: unknown } | undefined)?.toString ===
+                  "function"
+                ? (phoneValue as { readonly toString: () => string }).toString()
+                : "";
+        const digits = phoneText.replaceAll(/\D/gu, "");
+        if (digits.length > 0) {
+          displays.push(`+${digits}`);
+        } else {
+          unresolvedParticipantCount += 1;
+        }
+      } catch {
+        unresolvedParticipantCount += 1;
+      }
+    }
+    return {
+      voteRecordCount: voteRows.length,
+      participantDisplays: [...new Set(displays)].sort((left, right) => left.localeCompare(right)),
+      unresolvedParticipantCount,
+    };
+  }, pollMessageId);
+  if (result === undefined) return undefined;
+
+  const fields = result as Readonly<Record<string, unknown>>;
+  if (
+    typeof fields.voteRecordCount !== "number" ||
+    !Array.isArray(fields.participantDisplays) ||
+    typeof fields.unresolvedParticipantCount !== "number" ||
+    fields.participantDisplays.some((display) => typeof display !== "string")
+  ) {
+    return undefined;
+  }
+  return Object.freeze({
+    voteRecordCount: fields.voteRecordCount,
+    participantDisplays: Object.freeze([...fields.participantDisplays]),
+    unresolvedParticipantCount: fields.unresolvedParticipantCount,
+  });
+}
+
+export interface WhatsAppReactionParticipantProbe {
+  readonly reactionSenderRecordCount: number;
+  readonly participantDisplays: readonly string[];
+  readonly unresolvedParticipantCount: number;
+}
+
+export async function probeWhatsAppReactionParticipants(
+  client: WhatsAppGroupBrowserClient,
+  messageId: string,
+): Promise<WhatsAppReactionParticipantProbe | undefined> {
+  const page = client.pupPage as unknown as {
+    readonly evaluate: <T, A>(
+      pageFunction: (argument: A) => T | Promise<T>,
+      argument: A,
+    ) => Promise<T>;
+  };
+  const result = await page.evaluate(async (reactionMessageId) => {
+    const browser = globalThis as unknown as {
+      readonly require: (moduleName: string) => unknown;
+    };
+    const reactionModel = await (
+      browser.require("WAWebCollections") as {
+        readonly Reactions: { readonly find: (value: string) => Promise<Record<string, unknown>> };
+      }
+    ).Reactions.find(reactionMessageId);
+    const reactionGroups = (
+      reactionModel?.reactions as { readonly serialize?: () => unknown } | undefined
+    )?.serialize?.();
+    if (!Array.isArray(reactionGroups)) return undefined;
+
+    const senderRecords = reactionGroups.flatMap((group) =>
+      Array.isArray((group as { readonly senders?: unknown }).senders)
+        ? (group as { readonly senders: readonly Record<string, unknown>[] }).senders
+        : [],
+    );
+    const senderKey = (sender: Readonly<Record<string, unknown>>): string | undefined => {
+      const value = sender.senderId ?? sender.senderUserJid ?? sender.author ?? sender.from;
+      if (typeof value === "string") return value;
+      return typeof (value as { readonly toString?: unknown } | undefined)?.toString === "function"
+        ? (value as { readonly toString: () => string }).toString()
+        : undefined;
+    };
+    const participantKeys = new Set(
+      senderRecords.flatMap((sender) => {
+        const key = senderKey(sender);
+        return key === undefined ? [] : [key];
+      }),
+    );
+
+    const displays: string[] = [];
+    let unresolvedParticipantCount = 0;
+    for (const participantKey of participantKeys) {
+      try {
+        const wid = (
+          browser.require("WAWebWidFactory") as {
+            readonly createWid: (value: string) => unknown;
+          }
+        ).createWid(participantKey);
+        const contact = await (
+          browser.require("WAWebCollections") as {
+            readonly Contact: {
+              readonly find: (value: unknown) => Promise<Record<string, unknown>>;
+            };
+          }
+        ).Contact.find(wid);
+        const username = typeof contact?.username === "string" ? contact.username.trim() : "";
+        if (username.length > 0) {
+          displays.push(username.startsWith("@") ? username : `@${username}`);
+          continue;
+        }
+        const directPhone = contact?.phoneNumber;
+        const phoneValue =
+          directPhone ??
+          (
+            browser.require("WAWebApiContact") as {
+              readonly getPhoneNumber: (value: unknown) => unknown;
+            }
+          ).getPhoneNumber(wid);
+        const phoneText =
+          typeof phoneValue === "string"
+            ? phoneValue
+            : typeof (phoneValue as { readonly user?: unknown } | undefined)?.user === "string"
+              ? (phoneValue as { readonly user: string }).user
+              : typeof (phoneValue as { readonly toString?: unknown } | undefined)?.toString ===
+                  "function"
+                ? (phoneValue as { readonly toString: () => string }).toString()
+                : "";
+        const digits = phoneText.replaceAll(/\D/gu, "");
+        if (digits.length > 0) {
+          displays.push(`+${digits}`);
+        } else {
+          unresolvedParticipantCount += 1;
+        }
+      } catch {
+        unresolvedParticipantCount += 1;
+      }
+    }
+    return {
+      reactionSenderRecordCount: senderRecords.length,
+      participantDisplays: [...new Set(displays)].sort((left, right) => left.localeCompare(right)),
+      unresolvedParticipantCount,
+    };
+  }, messageId);
+  if (result === undefined) return undefined;
+
+  const fields = result as Readonly<Record<string, unknown>>;
+  if (
+    typeof fields.reactionSenderRecordCount !== "number" ||
+    !Array.isArray(fields.participantDisplays) ||
+    typeof fields.unresolvedParticipantCount !== "number" ||
+    fields.participantDisplays.some((display) => typeof display !== "string")
+  ) {
+    return undefined;
+  }
+  return Object.freeze({
+    reactionSenderRecordCount: fields.reactionSenderRecordCount,
+    participantDisplays: Object.freeze([...fields.participantDisplays]),
+    unresolvedParticipantCount: fields.unresolvedParticipantCount,
+  });
 }

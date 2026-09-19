@@ -12,6 +12,8 @@ import {
   discoverWhatsAppWeeklyMarkers,
   listWhatsAppGroups,
   probeWhatsAppGroupHistory,
+  probeWhatsAppPollParticipants,
+  probeWhatsAppReactionParticipants,
   type WhatsAppGroupBrowserClient,
 } from "./whatsapp.js";
 
@@ -86,6 +88,40 @@ async function verifySelectedChat(client: WAWebJS.Client): Promise<void> {
     rangeStartMs,
     rangeEndMs: now.getTime(),
   });
+  const newestPoll = [...markers]
+    .reverse()
+    .find(
+      (marker) =>
+        marker.followingType === "poll_creation" && marker.followingMessageId !== undefined,
+    );
+  if (newestPoll === undefined || newestPoll.followingMessageId === undefined) {
+    throw new Error("No paired poll item was found in the loaded current-month markers.");
+  }
+  const pollParticipants = await probeWhatsAppPollParticipants(
+    browserClient,
+    newestPoll.followingMessageId,
+  );
+  if (pollParticipants === undefined) {
+    throw new Error("Poll participant details are not available for the newest paired poll item.");
+  }
+  const newestPost = [...markers]
+    .reverse()
+    .find(
+      (marker) =>
+        marker.followingType !== "poll_creation" && marker.followingMessageId !== undefined,
+    );
+  if (newestPost === undefined || newestPost.followingMessageId === undefined) {
+    throw new Error("No paired non-poll item was found in the loaded current-month markers.");
+  }
+  const reactionParticipants = await probeWhatsAppReactionParticipants(
+    browserClient,
+    newestPost.followingMessageId,
+  );
+  if (reactionParticipants === undefined) {
+    throw new Error(
+      "Reaction participant details are not available for the newest paired non-poll item.",
+    );
+  }
 
   console.log(`Selected chat is available: ${probe.group.name}`);
   console.log(`Loaded messages before request: ${probe.loadedMessageCountBefore}`);
@@ -107,6 +143,26 @@ async function verifySelectedChat(client: WAWebJS.Client): Promise<void> {
     if (marker.recoveredAfterRevoked) {
       console.log("  recovered replacement after revoked item");
     }
+  }
+  console.log(`Newest poll candidate: ${formatLocalDate(newestPoll.followingTimestampMs)}`);
+  console.log(`Poll vote records: ${pollParticipants.voteRecordCount}`);
+  console.log("Poll participants:");
+  for (const display of pollParticipants.participantDisplays) {
+    console.log(display);
+  }
+  if (pollParticipants.unresolvedParticipantCount > 0) {
+    console.log(`Unresolved participants: ${pollParticipants.unresolvedParticipantCount}`);
+  }
+  console.log(
+    `Newest non-poll candidate: ${formatLocalDate(newestPost.followingTimestampMs)} ${newestPost.followingType}`,
+  );
+  console.log(`Reaction sender records: ${reactionParticipants.reactionSenderRecordCount}`);
+  console.log("Post participants:");
+  for (const display of reactionParticipants.participantDisplays) {
+    console.log(display);
+  }
+  if (reactionParticipants.unresolvedParticipantCount > 0) {
+    console.log(`Unresolved post participants: ${reactionParticipants.unresolvedParticipantCount}`);
   }
 }
 
