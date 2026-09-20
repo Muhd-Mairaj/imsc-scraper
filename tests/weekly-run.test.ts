@@ -32,6 +32,7 @@ function harness(overrides: Partial<WeeklyRunDependencies> = {}) {
     recipientChatId: "60123456789@c.us",
     selfChatId: "60199999999@c.us",
     force: false,
+    dryRun: false,
     state: EMPTY_STATE,
     saveState: async (state) => {
       saved.push(state);
@@ -79,6 +80,26 @@ test("force sends again when the window was already sent", async () => {
   expect(sent).toHaveLength(1);
   expect(sent[0]?.chatId).toBe("60123456789@c.us");
   expect(saved.at(-1)?.lastReportWindowEnd).toBe(WINDOW_END);
+});
+
+test("a dry run prints the report without sending or saving", async () => {
+  const { dependencies, sent, saved, logs } = harness({ dryRun: true });
+  const outcome = await runWeeklyReport(dependencies);
+  expect(outcome).toEqual({ status: "dry-run", emptyWeek: false });
+  expect(sent).toHaveLength(0);
+  expect(saved).toHaveLength(0);
+  expect(logs.some((line) => line.includes("[AUTO MESSAGE]"))).toBe(true);
+});
+
+test("a dry run ignores an already-sent window and still records nothing", async () => {
+  const { dependencies, sent, saved } = harness({
+    dryRun: true,
+    state: { lastReportWindowEnd: WINDOW_END, lastAlertWindowEnd: undefined },
+  });
+  const outcome = await runWeeklyReport(dependencies);
+  expect(outcome.status).toBe("dry-run");
+  expect(sent).toHaveLength(0);
+  expect(saved).toHaveLength(0);
 });
 
 test("an empty week notifies both the recipient and the operator", async () => {

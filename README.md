@@ -84,6 +84,12 @@ Sends the configured `weeklyReportRecipient` a WhatsApp message covering the sev
   bun run dev weekly --force
   ```
 
+- `--dry-run` collects and prints the exact message that would be sent, without sending it or updating the state file. It also bypasses the idempotency check, so it is a safe way to inspect a report:
+
+  ```sh
+  bun run dev weekly --dry-run
+  ```
+
 The failure alert is best-effort: it cannot be delivered if WhatsApp itself is unreachable.
 
 ## Headless Docker deployment
@@ -155,6 +161,12 @@ Re-send the current window even if it was already recorded:
 
 ```sh
 docker compose run --rm imsc weekly --force
+```
+
+Preview the exact message without sending it or updating the state file:
+
+```sh
+docker compose run --rm imsc weekly --dry-run
 ```
 
 Failure alerts are best-effort and go to your own number; self-send is verified working on the pinned client version.

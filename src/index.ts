@@ -102,7 +102,7 @@ function phoneDigits(value: string): string {
   return value.replaceAll(/\D/gu, "");
 }
 
-async function runWeekly(client: WAWebJS.Client, force: boolean): Promise<void> {
+async function runWeekly(client: WAWebJS.Client, force: boolean, dryRun: boolean): Promise<void> {
   if (client.pupPage === undefined) {
     throw new Error("WhatsApp Web did not provide a browser page for the weekly report.");
   }
@@ -140,12 +140,14 @@ async function runWeekly(client: WAWebJS.Client, force: boolean): Promise<void> 
       return { items: collected.items, warnings: [...warnings, ...collected.warnings] };
     },
     sendMessage: async (chatId, content) => {
-      await client.sendMessage(chatId, content);
+      const message = await client.sendMessage(chatId, content);
+      console.log(`WhatsApp accepted message ${message.id._serialized} for ${chatId}.`);
     },
     recipientChatId: `${phoneDigits(recipient)}@c.us`,
     selfChatId,
     state,
     force,
+    dryRun,
     saveState: saveWeeklyState,
     log: (message) => {
       console.log(message);
@@ -294,7 +296,7 @@ function puppeteerOptions() {
 }
 
 async function main(): Promise<void> {
-  const { command, force } = parseCommand(process.argv.slice(2));
+  const { command, force, dryRun } = parseCommand(process.argv.slice(2));
   const client = new Client({
     authStrategy: new LocalAuth({
       clientId: "imsc-scraper",
@@ -323,7 +325,7 @@ async function main(): Promise<void> {
     if (command === "setup") {
       await runSetup(client);
     } else if (command === "weekly") {
-      await runWeekly(client, force);
+      await runWeekly(client, force, dryRun);
     } else {
       await verifySelectedChat(client);
     }
