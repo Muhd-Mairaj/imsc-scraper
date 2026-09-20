@@ -76,6 +76,12 @@ Build the image after cloning:
 docker compose build
 ```
 
+Create the host `data/` directory before the first run, otherwise Docker creates it as root and the non-root container cannot write the session or config:
+
+```sh
+mkdir -p data
+```
+
 Run setup interactively over SSH. The QR code is printed in the terminal; scan it from **WhatsApp > Linked devices > Link a device**:
 
 ```sh
