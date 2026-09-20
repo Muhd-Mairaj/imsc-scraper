@@ -5,6 +5,7 @@ import { createInterface } from "node:readline/promises";
 import select from "@inquirer/select";
 import qrcode from "qrcode-terminal";
 import WAWebJS from "whatsapp-web.js";
+import { parseCommand } from "./commands.js";
 import {
   type AppConfig,
   authDirectory,
@@ -15,6 +16,7 @@ import {
   type SelectedChatConfig,
   saveConfig,
 } from "./config.js";
+import { createLogger, type Logger, pruneLogFiles } from "./logger.js";
 import { type MonthlyActivityItem, renderMonthlyActivitySummary } from "./report.js";
 import { loadWeeklyState, saveWeeklyState } from "./state.js";
 import { runWeeklyReport } from "./weekly-run.js";
@@ -27,16 +29,9 @@ import {
   type WhatsAppGroupBrowserClient,
   type WhatsAppParticipant,
 } from "./whatsapp.js";
+import { assertMessageSent, describeAck } from "./whatsapp-send.js";
 
 const { Client, LocalAuth } = WAWebJS;
-
-type Command = "setup" | "verify" | "weekly";
-
-function commandFromArguments(arguments_: readonly string[]): Command {
-  if (arguments_[0] === "setup") return "setup";
-  if (arguments_[0] === "weekly") return "weekly";
-  return "verify";
-}
 
 function waitForClientReady(client: WAWebJS.Client): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -96,12 +91,15 @@ async function promptWeeklyReportRecipient(): Promise<string | undefined> {
   }
 }
 
-async function runSetup(client: WAWebJS.Client): Promise<void> {
-  console.log("WhatsApp Web is ready. Loading groups...");
+async function runSetup(client: WAWebJS.Client, logger: Logger): Promise<void> {
+  logger.info("WhatsApp Web is ready; loading groups for setup.");
   const selectedChat = await chooseGroup(client);
   const ignoredPhoneNumbers = await promptIgnoredPhoneNumbers();
   const weeklyReportRecipient = await promptWeeklyReportRecipient();
   await saveConfig({ selectedChat, ignoredPhoneNumbers, weeklyReportRecipient });
+  logger.info(
+    `Saved configuration: group "${selectedChat.name}" (${selectedChat.id}), ${ignoredPhoneNumbers.length} ignored number(s), weekly recipient ${weeklyReportRecipient ?? "unset"}.`,
+  );
   console.log(`Saved “${selectedChat.name}” to ${configFilePath}`);
 }
 
@@ -109,7 +107,12 @@ function phoneDigits(value: string): string {
   return value.replaceAll(/\D/gu, "");
 }
 
-async function runWeekly(client: WAWebJS.Client): Promise<void> {
+async function runWeekly(
+  client: WAWebJS.Client,
+  force: boolean,
+  dryRun: boolean,
+  logger: Logger,
+): Promise<void> {
   if (client.pupPage === undefined) {
     throw new Error("WhatsApp Web did not provide a browser page for the weekly report.");
   }
@@ -125,6 +128,10 @@ async function runWeekly(client: WAWebJS.Client): Promise<void> {
   // already the canonical chat id, so it is passed through unchanged.
   const selfChatId = client.info.wid._serialized;
   const state = await loadWeeklyState();
+  const recipientChatId = `${phoneDigits(recipient)}@c.us`;
+  logger.info(
+    `Weekly run starting: recipient=${recipientChatId}, self=${selfChatId}, force=${force}, dryRun=${dryRun}.`,
+  );
 
   await runWeeklyReport({
     now: new Date(),
@@ -147,14 +154,21 @@ async function runWeekly(client: WAWebJS.Client): Promise<void> {
       return { items: collected.items, warnings: [...warnings, ...collected.warnings] };
     },
     sendMessage: async (chatId, content) => {
-      await client.sendMessage(chatId, content);
+      const message = assertMessageSent(chatId, await client.sendMessage(chatId, content));
+      logger.info(
+        `WhatsApp accepted message ${message.id._serialized} for ${chatId} (ack=${message.ack}: ${describeAck(message.ack)}).`,
+      );
+      const ack = await waitForAcknowledgement(message, logger);
+      logger.info(`Message ${message.id._serialized} settled at ack=${ack} (${describeAck(ack)}).`);
     },
-    recipientChatId: `${phoneDigits(recipient)}@c.us`,
+    recipientChatId,
     selfChatId,
     state,
+    force,
+    dryRun,
     saveState: saveWeeklyState,
     log: (message) => {
-      console.log(message);
+      logger.info(message);
     },
   });
 }
@@ -260,12 +274,15 @@ async function collectEngagement(
   return { items, warnings };
 }
 
-async function verifySelectedChat(client: WAWebJS.Client): Promise<void> {
+async function verifySelectedChat(client: WAWebJS.Client, logger: Logger): Promise<void> {
   if (client.pupPage === undefined) {
     throw new Error("WhatsApp Web did not provide a browser page for selected chat verification.");
   }
   const config = await loadConfig();
   const browserClient = { pupPage: client.pupPage } as WhatsAppGroupBrowserClient;
+  logger.info(
+    `Monthly summary for chat "${config.selectedChat.name}" (${config.selectedChat.id}).`,
+  );
   const probe = await probeWhatsAppGroupHistory(browserClient, config.selectedChat.id);
   if (probe === undefined) {
     throw new Error(`Selected chat metadata is not available for ${config.selectedChat.id}.`);
@@ -276,6 +293,9 @@ async function verifySelectedChat(client: WAWebJS.Client): Promise<void> {
   if (probe.oldestLoadedTimestampMs === undefined || probe.oldestLoadedTimestampMs > rangeStartMs) {
     warnings.push("History may not reach the start of the current month.");
   }
+  logger.info(
+    `Oldest loaded message: ${probe.oldestLoadedTimestampMs === undefined ? "unknown" : new Date(probe.oldestLoadedTimestampMs).toISOString()}; range starts ${new Date(rangeStartMs).toISOString()}.`,
+  );
   const collected = await collectEngagement(browserClient, config, {
     startMs: rangeStartMs,
     endMs: now.getTime(),
@@ -284,8 +304,40 @@ async function verifySelectedChat(client: WAWebJS.Client): Promise<void> {
     ...warnings,
     ...collected.warnings,
   ]);
+  const summaryPath = monthlySummaryFilePath(now);
   stdout.write(summary);
-  await writeFile(monthlySummaryFilePath(now), summary, { encoding: "utf8", mode: 0o600 });
+  await writeFile(summaryPath, summary, { encoding: "utf8", mode: 0o600 });
+  logger.info(
+    `Monthly summary: ${collected.items.length} item(s), ${warnings.length + collected.warnings.length} warning(s), written to ${summaryPath}.`,
+  );
+}
+
+/**
+ * Waits briefly for the message to reach the recipient, so a message that
+ * WhatsApp accepted but could not deliver is visible in the logs rather than
+ * looking like a success. `Message.reload()` refreshes `ack` in place.
+ */
+async function waitForAcknowledgement(
+  message: WAWebJS.Message,
+  logger: Logger,
+  timeoutMs = 15_000,
+): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  while (message.ack < 2 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    try {
+      const reloaded = await message.reload();
+      if (!reloaded) break;
+    } catch {
+      break;
+    }
+  }
+  if (message.ack < 2) {
+    logger.warn(
+      `Message ${message.id._serialized} did not reach "delivered" within ${timeoutMs}ms; last ack=${message.ack} (${describeAck(message.ack)}).`,
+    );
+  }
+  return message.ack;
 }
 
 function puppeteerOptions() {
@@ -300,7 +352,15 @@ function puppeteerOptions() {
 }
 
 async function main(): Promise<void> {
-  const command = commandFromArguments(process.argv.slice(2));
+  const { command, force, dryRun } = parseCommand(process.argv.slice(2));
+  const logger = createLogger({ scope: command });
+  pruneLogFiles();
+  logger.info(`Starting "${command}" with args ${JSON.stringify(process.argv.slice(2))}.`);
+  const versions = process.versions as Readonly<Record<string, string | undefined>>;
+  logger.info(
+    `Runtime: bun=${versions.bun ?? "?"} node=${versions.node ?? "?"} pid=${process.pid} cwd=${process.cwd()} timeZone=${Intl.DateTimeFormat().resolvedOptions().timeZone}.`,
+  );
+
   const client = new Client({
     authStrategy: new LocalAuth({
       clientId: "imsc-scraper",
@@ -315,26 +375,36 @@ async function main(): Promise<void> {
   });
 
   client.on("qr", (qr) => {
+    logger.info("A QR code was requested; waiting for a linked-device scan.");
     console.log("\nScan this QR code from WhatsApp > Linked devices:\n");
     qrcode.generate(qr, { small: true });
   });
   client.on("authenticated", () => {
+    logger.info("WhatsApp authenticated; waiting for chats to load.");
     console.log("WhatsApp authenticated. Waiting for chats to load...");
   });
 
   try {
-    console.log("Starting WhatsApp Web...");
+    logger.info("Starting WhatsApp Web.");
     const ready = waitForClientReady(client);
     await Promise.all([client.initialize(), ready]);
+    logger.info("WhatsApp Web is ready.");
     if (command === "setup") {
-      await runSetup(client);
+      await runSetup(client, logger);
     } else if (command === "weekly") {
-      await runWeekly(client);
+      await runWeekly(client, force, dryRun, logger);
     } else {
-      await verifySelectedChat(client);
+      await verifySelectedChat(client, logger);
     }
+    logger.info(`Command "${command}" completed successfully.`);
+  } catch (error) {
+    logger.error(
+      `Command "${command}" failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+    );
+    throw error;
   } finally {
     await client.destroy().catch(() => undefined);
+    logger.info("WhatsApp client closed.");
   }
 }
 

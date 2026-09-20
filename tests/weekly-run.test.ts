@@ -31,6 +31,8 @@ function harness(overrides: Partial<WeeklyRunDependencies> = {}) {
     },
     recipientChatId: "60123456789@c.us",
     selfChatId: "60199999999@c.us",
+    force: false,
+    dryRun: false,
     state: EMPTY_STATE,
     saveState: async (state) => {
       saved.push(state);
@@ -66,6 +68,38 @@ test("skips without collecting when the window was already sent", async () => {
   expect(outcome.status).toBe("skipped");
   expect(collected).toBe(0);
   expect(sent).toHaveLength(0);
+});
+
+test("force sends again when the window was already sent", async () => {
+  const { dependencies, sent, saved } = harness({
+    force: true,
+    state: { lastReportWindowEnd: WINDOW_END, lastAlertWindowEnd: undefined },
+  });
+  const outcome = await runWeeklyReport(dependencies);
+  expect(outcome).toEqual({ status: "sent", emptyWeek: false });
+  expect(sent).toHaveLength(1);
+  expect(sent[0]?.chatId).toBe("60123456789@c.us");
+  expect(saved.at(-1)?.lastReportWindowEnd).toBe(WINDOW_END);
+});
+
+test("a dry run prints the report without sending or saving", async () => {
+  const { dependencies, sent, saved, logs } = harness({ dryRun: true });
+  const outcome = await runWeeklyReport(dependencies);
+  expect(outcome).toEqual({ status: "dry-run", emptyWeek: false });
+  expect(sent).toHaveLength(0);
+  expect(saved).toHaveLength(0);
+  expect(logs.some((line) => line.includes("[AUTO MESSAGE]"))).toBe(true);
+});
+
+test("a dry run ignores an already-sent window and still records nothing", async () => {
+  const { dependencies, sent, saved } = harness({
+    dryRun: true,
+    state: { lastReportWindowEnd: WINDOW_END, lastAlertWindowEnd: undefined },
+  });
+  const outcome = await runWeeklyReport(dependencies);
+  expect(outcome.status).toBe("dry-run");
+  expect(sent).toHaveLength(0);
+  expect(saved).toHaveLength(0);
 });
 
 test("an empty week notifies both the recipient and the operator", async () => {
@@ -124,6 +158,19 @@ test("a second failure in the same window does not alert again", async () => {
   });
   await expect(runWeeklyReport(dependencies)).rejects.toThrow("history unavailable");
   expect(sent).toHaveLength(0);
+});
+
+test("force alerts again when the window already alerted", async () => {
+  const { dependencies, sent } = harness({
+    force: true,
+    state: { lastReportWindowEnd: undefined, lastAlertWindowEnd: WINDOW_END },
+    collect: async () => {
+      throw new Error("history unavailable");
+    },
+  });
+  await expect(runWeeklyReport(dependencies)).rejects.toThrow("history unavailable");
+  expect(sent).toHaveLength(1);
+  expect(sent[0]?.chatId).toBe("60199999999@c.us");
 });
 
 test("a failed alert never breaks the run", async () => {
