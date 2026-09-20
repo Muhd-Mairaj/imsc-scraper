@@ -14,6 +14,9 @@ import {
   saveConfig,
 } from "./config.js";
 import { type MonthlyActivityItem, renderMonthlyActivitySummary } from "./report.js";
+import { computeWeeklyWindow } from "./schedule.js";
+import { loadWeeklyState, saveWeeklyState } from "./state.js";
+import { runWeeklyReport } from "./weekly-run.js";
 import {
   discoverWhatsAppWeeklyMarkers,
   listWhatsAppGroups,
@@ -26,10 +29,11 @@ import {
 
 const { Client, LocalAuth } = WAWebJS;
 
-type Command = "setup" | "verify";
+type Command = "setup" | "verify" | "weekly";
 
 function commandFromArguments(arguments_: readonly string[]): Command {
   if (arguments_[0] === "setup") return "setup";
+  if (arguments_[0] === "weekly") return "weekly";
   return "verify";
 }
 
@@ -77,12 +81,82 @@ async function promptIgnoredPhoneNumbers(): Promise<readonly string[]> {
   }
 }
 
+async function promptWeeklyReportRecipient(): Promise<string | undefined> {
+  const readline = createInterface({ input: stdin, output: stdout });
+  try {
+    console.log(
+      "Enter the phone number that should receive the weekly report in international format.",
+    );
+    const value = await readline.question("Weekly report recipient (blank to skip): ");
+    const digits = phoneDigits(value);
+    return digits.length === 0 ? undefined : digits;
+  } finally {
+    readline.close();
+  }
+}
+
 async function runSetup(client: WAWebJS.Client): Promise<void> {
   console.log("WhatsApp Web is ready. Loading groups...");
   const selectedChat = await chooseGroup(client);
   const ignoredPhoneNumbers = await promptIgnoredPhoneNumbers();
-  await saveConfig({ selectedChat, ignoredPhoneNumbers, weeklyReportRecipient: undefined });
+  const weeklyReportRecipient = await promptWeeklyReportRecipient();
+  await saveConfig({ selectedChat, ignoredPhoneNumbers, weeklyReportRecipient });
   console.log(`Saved “${selectedChat.name}” to ${configFilePath}`);
+}
+
+function phoneDigits(value: string): string {
+  return value.replaceAll(/\D/gu, "");
+}
+
+async function runWeekly(client: WAWebJS.Client): Promise<void> {
+  if (client.pupPage === undefined) {
+    throw new Error("WhatsApp Web did not provide a browser page for the weekly report.");
+  }
+  const config = await loadConfig();
+  const recipient = config.weeklyReportRecipient;
+  if (recipient === undefined) {
+    throw new Error(
+      `No weekly report recipient is configured in ${configFilePath}. Run \`bun run dev setup\` again.`,
+    );
+  }
+  const browserClient = { pupPage: client.pupPage } as WhatsAppGroupBrowserClient;
+  // `info.wid` is non-optional in the whatsapp-web.js types and `_serialized` is
+  // already the canonical chat id, so it is passed through unchanged.
+  const selfChatId = client.info.wid._serialized;
+  const state = await loadWeeklyState();
+
+  await runWeeklyReport({
+    now: new Date(),
+    collect: async () => {
+      const probe = await probeWhatsAppGroupHistory(browserClient, config.selectedChat.id);
+      if (probe === undefined) {
+        throw new Error(`Selected chat metadata is not available for ${config.selectedChat.id}.`);
+      }
+      const window = computeWeeklyWindow(new Date());
+      const warnings: string[] = [];
+      if (
+        probe.oldestLoadedTimestampMs === undefined ||
+        probe.oldestLoadedTimestampMs > window.startMs
+      ) {
+        warnings.push("History may not reach the start of the reporting week.");
+      }
+      const collected = await collectEngagement(browserClient, config, {
+        startMs: window.startMs,
+        endMs: window.endMs - 1,
+      });
+      return { items: collected.items, warnings: [...warnings, ...collected.warnings] };
+    },
+    sendMessage: async (chatId, content) => {
+      await client.sendMessage(chatId, content);
+    },
+    recipientChatId: `${phoneDigits(recipient)}@c.us`,
+    selfChatId,
+    state,
+    saveState: saveWeeklyState,
+    log: (message) => {
+      console.log(message);
+    },
+  });
 }
 
 function eligibleParticipants(
@@ -249,6 +323,8 @@ async function main(): Promise<void> {
     await Promise.all([client.initialize(), ready]);
     if (command === "setup") {
       await runSetup(client);
+    } else if (command === "weekly") {
+      await runWeekly(client);
     } else {
       await verifySelectedChat(client);
     }
