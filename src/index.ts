@@ -28,6 +28,7 @@ import {
   type WhatsAppGroupBrowserClient,
   type WhatsAppParticipant,
 } from "./whatsapp.js";
+import { assertMessageSent, describeAck } from "./whatsapp-send.js";
 
 const { Client, LocalAuth } = WAWebJS;
 
@@ -140,8 +141,12 @@ async function runWeekly(client: WAWebJS.Client, force: boolean, dryRun: boolean
       return { items: collected.items, warnings: [...warnings, ...collected.warnings] };
     },
     sendMessage: async (chatId, content) => {
-      const message = await client.sendMessage(chatId, content);
-      console.log(`WhatsApp accepted message ${message.id._serialized} for ${chatId}.`);
+      const message = assertMessageSent(chatId, await client.sendMessage(chatId, content));
+      console.log(
+        `WhatsApp accepted message ${message.id._serialized} for ${chatId} (ack=${message.ack}: ${describeAck(message.ack)}).`,
+      );
+      const ack = await waitForAcknowledgement(message);
+      console.log(`Message ${message.id._serialized} settled at ack=${ack} (${describeAck(ack)}).`);
     },
     recipientChatId: `${phoneDigits(recipient)}@c.us`,
     selfChatId,
@@ -282,6 +287,28 @@ async function verifySelectedChat(client: WAWebJS.Client): Promise<void> {
   ]);
   stdout.write(summary);
   await writeFile(monthlySummaryFilePath(now), summary, { encoding: "utf8", mode: 0o600 });
+}
+
+/**
+ * Waits briefly for the message to reach the recipient, so a message that
+ * WhatsApp accepted but could not deliver is visible in the logs rather than
+ * looking like a success. `Message.reload()` refreshes `ack` in place.
+ */
+async function waitForAcknowledgement(
+  message: WAWebJS.Message,
+  timeoutMs = 15_000,
+): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  while (message.ack < 2 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    try {
+      const reloaded = await message.reload();
+      if (!reloaded) break;
+    } catch {
+      break;
+    }
+  }
+  return message.ack;
 }
 
 function puppeteerOptions() {
