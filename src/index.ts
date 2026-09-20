@@ -80,7 +80,7 @@ async function runSetup(client: WAWebJS.Client): Promise<void> {
   console.log("WhatsApp Web is ready. Loading groups...");
   const selectedChat = await chooseGroup(client);
   const ignoredPhoneNumbers = await promptIgnoredPhoneNumbers();
-  await saveConfig({ selectedChat, ignoredPhoneNumbers });
+  await saveConfig({ selectedChat, ignoredPhoneNumbers, weeklyReportRecipient: undefined });
   console.log(`Saved “${selectedChat.name}” to ${configFilePath}`);
 }
 

@@ -9,6 +9,8 @@ export interface SelectedChatConfig {
 export interface AppConfig {
   selectedChat: SelectedChatConfig;
   ignoredPhoneNumbers: readonly string[];
+  /** Normalized digits, or undefined when unset. */
+  weeklyReportRecipient: string | undefined;
 }
 
 export const dataDirectory = resolve(process.cwd(), "data");
@@ -27,6 +29,9 @@ export async function saveConfig(config: AppConfig): Promise<void> {
     {
       selectedChat: config.selectedChat,
       ignoredPhoneNumbers: normalizePhoneNumbers(config.ignoredPhoneNumbers),
+      ...(config.weeklyReportRecipient === undefined
+        ? {}
+        : { weeklyReportRecipient: normalizePhoneNumbers([config.weeklyReportRecipient])[0] }),
     },
     null,
     2,
@@ -83,11 +88,17 @@ export async function loadConfig(): Promise<AppConfig> {
   ) {
     throw invalidConfig();
   }
+  const recipient = fields.weeklyReportRecipient;
+  if (recipient !== undefined && typeof recipient !== "string") {
+    throw invalidConfig();
+  }
   return {
     selectedChat: { id: selectedChatFields.id.trim(), name: selectedChatFields.name.trim() },
     ignoredPhoneNumbers: normalizePhoneNumbers(
       (fields.ignoredPhoneNumbers as readonly string[] | undefined) ?? [],
     ),
+    weeklyReportRecipient:
+      recipient === undefined ? undefined : (normalizePhoneNumbers([recipient])[0] ?? undefined),
   };
 }
 
