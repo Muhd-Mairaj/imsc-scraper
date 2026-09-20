@@ -1,6 +1,9 @@
 services:
   imsc:
     build: .
+    # Fixed hostname keeps Chromium's profile lock stable across runs, so an
+    # interrupted run does not leave a lock that looks like "another computer".
+    hostname: imsc
     init: true
     stdin_open: true
     tty: true

@@ -184,7 +184,18 @@ Preview the exact message without sending it or updating the state file:
 docker compose run --rm imsc weekly --dry-run
 ```
 
-Failure alerts are best-effort and go to your own number; self-send is verified working on the pinned client version.
+Failure alerts are best-effort and go to your own number. Both the recipient and your own number are resolved to their current WhatsApp id before sending.
+
+### Troubleshooting a stuck run
+
+If a run logs `WhatsApp authenticated` but never reaches `WhatsApp Web is ready`, the cached WhatsApp Web build or a stale Chromium profile lock is the usual cause. Clear them and retry:
+
+```sh
+rm -rf data/.wwebjs_cache data/auth/session-imsc-scraper/Singleton*
+```
+
+Sends are resolved to the recipient's current WhatsApp id (LID) first. If a run reports a number as not registered on WhatsApp, that number has no WhatsApp account.
+
 
 ## Quality commands
 

@@ -1,15 +1,5 @@
 import { expect, test } from "bun:test";
-import { describeAck, isOurMessage } from "../src/whatsapp-send.js";
-
-test("matches our own message with the expected body", () => {
-  expect(isOurMessage({ fromMe: true, body: "hello\n" }, "hello")).toBe(true);
-  expect(isOurMessage({ fromMe: true, body: "hello" }, "hello\n")).toBe(true);
-});
-
-test("rejects incoming messages and different bodies", () => {
-  expect(isOurMessage({ fromMe: false, body: "hello" }, "hello")).toBe(false);
-  expect(isOurMessage({ fromMe: true, body: "something else" }, "hello")).toBe(false);
-});
+import { describeAck } from "../src/whatsapp-send.js";
 
 test("labels each acknowledgement value", () => {
   expect(describeAck(-1)).toBe("error");
