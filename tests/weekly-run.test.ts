@@ -77,6 +77,31 @@ test("an empty week notifies both the recipient and the operator", async () => {
   expect(sent.map((entry) => entry.chatId)).toEqual(["60123456789@c.us", "60199999999@c.us"]);
 });
 
+test("warnings do not hide an empty week from the operator", async () => {
+  const { dependencies, sent } = harness({
+    collect: async () => ({
+      items: [],
+      warnings: ["History may not reach the start of the reporting week."],
+    }),
+  });
+  const outcome = await runWeeklyReport(dependencies);
+  expect(outcome).toEqual({ status: "sent", emptyWeek: true });
+  expect(sent.map((entry) => entry.chatId)).toEqual(["60123456789@c.us", "60199999999@c.us"]);
+  expect(sent[0]?.content).toContain("No engagement recorded this week.");
+});
+
+test("collect receives the same window used for the report", async () => {
+  let received: { startMs: number; endMs: number } | undefined;
+  const { dependencies } = harness({
+    collect: async (window) => {
+      received = window;
+      return { items: [], warnings: [] };
+    },
+  });
+  await runWeeklyReport(dependencies);
+  expect(received?.endMs).toBe(WINDOW_END);
+});
+
 test("a collection failure alerts the operator once and rethrows", async () => {
   const { dependencies, sent, saved } = harness({
     collect: async () => {

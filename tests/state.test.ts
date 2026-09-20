@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import {
   loadWeeklyState,
   saveWeeklyState,
@@ -9,6 +9,18 @@ import {
 } from "../src/state.js";
 
 const EMPTY = { lastReportWindowEnd: undefined, lastAlertWindowEnd: undefined };
+
+// These tests write to the real data/weekly-state.json. Preserve any existing
+// state so a test run cannot make the next weekly run resend a report.
+const originalState = await readFile(weeklyStateFilePath, "utf8").catch(() => undefined);
+
+afterAll(async () => {
+  if (originalState === undefined) {
+    await rm(weeklyStateFilePath, { force: true });
+    return;
+  }
+  await writeFile(weeklyStateFilePath, originalState, { encoding: "utf8", mode: 0o600 });
+});
 
 beforeEach(async () => {
   await rm(weeklyStateFilePath, { force: true });
