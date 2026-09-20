@@ -7,9 +7,18 @@ services:
     # Run as the owner of ./data so the session and summaries do not come back
     # root-owned on the host. The image ships a `bun` user at uid/gid 1000.
     user: "${IMSC_UID:-1000}:${IMSC_GID:-1000}"
+    # Chromium ships with its own sandbox, but the container cannot use it
+    # anyway (WHATSAPP_DOCKER=true passes --no-sandbox), so dropping every
+    # capability and blocking privilege escalation costs us nothing.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
     environment:
       WHATSAPP_HEADLESS: "true"
       WHATSAPP_DOCKER: "true"
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+      # Pin the report timezone; the container otherwise defaults to UTC.
+      TZ: Asia/Kuala_Lumpur
     volumes:
       - ./data:/app/data

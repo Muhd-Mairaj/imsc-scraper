@@ -22,13 +22,13 @@ Optionally install the repository's Git hook:
 uvx pre-commit install
 ```
 
-Configure the announcements group and ignored admin phones:
+Configure the announcements group, ignored admin phones, and the weekly report recipient:
 
 ```sh
 bun run dev setup
 ```
 
-On the first run, open **WhatsApp > Linked devices > Link a device** on your phone and scan the QR code shown in the terminal. Select the Community announcements group, then enter ignored admin phone numbers in international format, one number per line. Submit a blank line when finished.
+On the first run, open **WhatsApp > Linked devices > Link a device** on your phone and scan the QR code shown in the terminal. Select the Community announcements group, then enter ignored admin phone numbers in international format, one number per line. Submit a blank line when finished. Finally, enter the phone number that should receive the weekly report, or leave it blank to skip weekly reports.
 
 ```text
 +60 12-345 6789
@@ -44,11 +44,12 @@ The private configuration is stored at `data/config.json`:
     "id": "1234567890@g.us",
     "name": "Community Announcements"
   },
-  "ignoredPhoneNumbers": ["60123456789", "60129876543"]
+  "ignoredPhoneNumbers": ["60123456789", "60129876543"],
+  "weeklyReportRecipient": "60123456789"
 }
 ```
 
-Phone values are normalized to digits before saving. Running setup again lets you replace both the selected group and the ignored admin list.
+Phone values are normalized to digits before saving. Running setup again lets you replace the selected group, the ignored admin list, and the weekly report recipient.
 
 ## Create the monthly summary
 
@@ -65,6 +66,20 @@ data/monthly-YYYY-MM.txt
 Poll participation is displayed with activity value `2`; reaction participation is displayed with activity value `1`. Ignored admin phones are excluded. A valid activity item with no eligible participants keeps its date heading. If history, engagement, or identity data is unavailable, the summary prints an explicit warning rather than treating it as zero activity.
 
 The linked-device session, configuration, and monthly output all remain under the ignored `data/` directory and should stay private.
+
+## Weekly engagement report
+
+```sh
+bun run dev weekly
+```
+
+Sends the configured `weeklyReportRecipient` a WhatsApp message covering the seven complete local days ending at the most recent Saturday 00:00 `Asia/Kuala_Lumpur`. Every script-sent message starts with `[AUTO MESSAGE]` and ends with the bot signature so it is distinguishable from messages you type yourself.
+
+- An empty week sends a notice to the recipient and to your own number.
+- A failure sends a best-effort alert to your own number, then exits non-zero so the scheduler records the failure.
+- Sends are idempotent per window; the last successfully sent window is recorded in `data/weekly-state.json`.
+
+The failure alert is best-effort: it cannot be delivered if WhatsApp itself is unreachable.
 
 ## Headless Docker deployment
 
@@ -103,6 +118,33 @@ IMSC_UID="$(id -u)" IMSC_GID="$(id -g)" docker compose run --rm imsc setup
 ```
 
 Chromium runs with `--no-sandbox` because the container has no usable sandbox and unprivileged user namespaces are unavailable; this is set by `WHATSAPP_DOCKER=true` and is required, not optional.
+
+### Weekly report on a timer
+
+The weekly report is intended to run from a systemd timer at 06:00 every Saturday `Asia/Kuala_Lumpur`. Adjust `WorkingDirectory` and the `docker` path in `deploy/imsc-weekly.service` for the server, then install both units:
+
+```sh
+sudo cp deploy/imsc-weekly.service deploy/imsc-weekly.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now imsc-weekly.timer
+```
+
+Inspect runs and verify the schedule:
+
+```sh
+journalctl -u imsc-weekly.service
+systemctl list-timers imsc-weekly.timer
+```
+
+`Persistent=true` makes systemd run a missed report on the next boot. The window is anchored to the Saturday 00:00 boundary, so a late catch-up run still reports the correct week rather than a shifted one. `Restart=on-failure` retries are bounded to avoid spinning on a persistent fault.
+
+Run one report by hand with:
+
+```sh
+docker compose run --rm imsc weekly
+```
+
+Failure alerts are best-effort and go to your own number; self-send is verified working on the pinned client version.
 
 ## Quality commands
 
