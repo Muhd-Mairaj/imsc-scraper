@@ -1,4 +1,5 @@
 import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import select from "@inquirer/select";
@@ -8,6 +9,7 @@ import {
   type AppConfig,
   authDirectory,
   configFilePath,
+  dataDirectory,
   loadConfig,
   monthlySummaryFilePath,
   type SelectedChatConfig,
@@ -306,6 +308,11 @@ async function main(): Promise<void> {
       clientId: "imsc-scraper",
       dataPath: authDirectory,
     }),
+    // Keep the web-version cache inside the writable data directory. The
+    // default path is `./.wwebjs_cache` relative to the process cwd, which is
+    // root-owned in the container; the resulting mkdir EACCES prevents the
+    // client from ever reaching the `ready` event.
+    webVersionCache: { type: "local", path: join(dataDirectory, ".wwebjs_cache") },
     puppeteer: puppeteerOptions(),
   });
 
