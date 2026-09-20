@@ -589,3 +589,60 @@ export async function probeWhatsAppReactionParticipants(
     unresolvedParticipantCount: fields.unresolvedParticipantCount,
   });
 }
+
+export interface WhatsAppSentMessageConfirmation {
+  readonly body: string;
+  readonly ack: number | undefined;
+}
+
+/**
+ * Finds our own outgoing message in a chat's already-loaded messages, without
+ * going through `getChatById` (whose model conversion is unstable on the pinned
+ * client). This is how a send is confirmed: `client.sendMessage` can report
+ * nothing even when the message was delivered.
+ */
+export async function findWhatsAppSentMessage(
+  client: WhatsAppGroupBrowserClient,
+  chatId: string,
+  body: string,
+): Promise<WhatsAppSentMessageConfirmation | undefined> {
+  const page = client.pupPage as unknown as {
+    readonly evaluate: <T, A>(
+      pageFunction: (argument: A) => T | Promise<T>,
+      argument: A,
+    ) => Promise<T>;
+  };
+  return await page.evaluate(
+    async (request: { readonly chatId: string; readonly expected: string }) => {
+      const browser = globalThis as unknown as {
+        readonly require: (moduleName: string) => unknown;
+      };
+      const widFactory = browser.require("WAWebWidFactory") as {
+        readonly createWid: (id: string) => unknown;
+      };
+      const collections = browser.require("WAWebCollections") as {
+        readonly Chat: {
+          readonly get: (wid: unknown) => Record<string, unknown> | undefined;
+        };
+      };
+      const chat = collections.Chat.get(widFactory.createWid(request.chatId));
+      const messages = chat?.msgs as
+        | { readonly getModelsArray?: () => readonly Record<string, unknown>[] }
+        | undefined;
+      if (messages?.getModelsArray === undefined) return undefined;
+      const match = messages
+        .getModelsArray()
+        .find(
+          (message) =>
+            (message.id as { readonly fromMe?: unknown } | undefined)?.fromMe === true &&
+            String(message.body ?? "").trim() === request.expected,
+        );
+      if (match === undefined) return undefined;
+      return {
+        body: String(match.body ?? ""),
+        ack: typeof match.ack === "number" ? match.ack : undefined,
+      };
+    },
+    { chatId, expected: body.trim() },
+  );
+}
