@@ -223,6 +223,11 @@ export async function discoverWhatsAppWeeklyMarkers(
       const markerText = normalizedText(marker);
       const markerTimestampMs = typeof marker.t === "number" ? marker.t * 1_000 : undefined;
       let following = ordered[index + 1];
+      // When the next post is the following week's title, this week had no
+      // engagement post; don't attribute that title to this week.
+      if (following !== undefined && isWeeklyTitle(following)) {
+        return [];
+      }
       let recoveredAfterRevoked = false;
       if (following?.type === "revoked" && markerTimestampMs !== undefined) {
         const markerDate = new Date(markerTimestampMs).toDateString();
