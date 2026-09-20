@@ -5,7 +5,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!!**/.kiro", "!!**/data", "!!**/dist", "!!**/node_modules"]
+    "includes": ["**", "!!**/.kiro", "!!**/data", "!!**/dist", "!!**/node_modules", "!!**/_legacy"]
   },
   "formatter": {
     "enabled": true,

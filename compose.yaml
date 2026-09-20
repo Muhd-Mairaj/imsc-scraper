@@ -1,0 +1,15 @@
+services:
+  imsc:
+    build: .
+    init: true
+    stdin_open: true
+    tty: true
+    # Run as the owner of ./data so the session and summaries do not come back
+    # root-owned on the host. The image ships a `bun` user at uid/gid 1000.
+    user: "${IMSC_UID:-1000}:${IMSC_GID:-1000}"
+    environment:
+      WHATSAPP_HEADLESS: "true"
+      WHATSAPP_DOCKER: "true"
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+    volumes:
+      - ./data:/app/data

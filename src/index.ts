@@ -193,6 +193,17 @@ async function verifySelectedChat(client: WAWebJS.Client): Promise<void> {
   await writeFile(monthlySummaryFilePath(now), summary, { encoding: "utf8", mode: 0o600 });
 }
 
+function puppeteerOptions() {
+  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  return {
+    headless: process.env.WHATSAPP_HEADLESS === "true",
+    ...(executablePath === undefined ? {} : { executablePath }),
+    ...(process.env.WHATSAPP_DOCKER === "true"
+      ? { args: ["--no-sandbox", "--disable-setuid-sandbox"] }
+      : {}),
+  };
+}
+
 async function main(): Promise<void> {
   const command = commandFromArguments(process.argv.slice(2));
   const client = new Client({
@@ -200,7 +211,7 @@ async function main(): Promise<void> {
       clientId: "imsc-scraper",
       dataPath: authDirectory,
     }),
-    puppeteer: { headless: false },
+    puppeteer: puppeteerOptions(),
   });
 
   client.on("qr", (qr) => {

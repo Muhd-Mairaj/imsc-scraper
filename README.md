@@ -66,6 +66,38 @@ Poll participation is displayed with activity value `2`; reaction participation 
 
 The linked-device session, configuration, and monthly output all remain under the ignored `data/` directory and should stay private.
 
+## Headless Docker deployment
+
+For a home server, Docker runs Chromium headlessly while keeping WhatsApp session data, configuration, and summaries in the local `data/` directory.
+
+Build the image after cloning:
+
+```sh
+docker compose build
+```
+
+Run setup interactively over SSH. The QR code is printed in the terminal; scan it from **WhatsApp > Linked devices > Link a device**:
+
+```sh
+docker compose run --rm imsc setup
+```
+
+Create or refresh the monthly summary:
+
+```sh
+docker compose run --rm imsc
+```
+
+Keep the host `data/` directory private and backed up. It is mounted into the container at `/app/data` and is intentionally excluded from the Docker image and Git.
+
+The container runs as uid/gid `1000`, matching the image's `bun` user and the owner of `./data`, so session and summary files stay owned by you on the host instead of coming back root-owned. If your host user has a different id, pass it through:
+
+```sh
+IMSC_UID="$(id -u)" IMSC_GID="$(id -g)" docker compose run --rm imsc setup
+```
+
+Chromium runs with `--no-sandbox` because the container has no usable sandbox and unprivileged user namespaces are unavailable; this is set by `WHATSAPP_DOCKER=true` and is required, not optional.
+
 ## Quality commands
 
 ```sh
