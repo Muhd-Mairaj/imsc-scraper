@@ -1,13 +1,14 @@
 import { expect, test } from "bun:test";
-import { assertMessageSent, describeAck } from "../src/whatsapp-send.js";
+import { describeAck, isOurMessage } from "../src/whatsapp-send.js";
 
-test("returns the resolved message unchanged", () => {
-  const message = { id: { _serialized: "true_123@c.us_ABC" }, ack: 1 };
-  expect(assertMessageSent("123@c.us", message)).toBe(message);
+test("matches our own message with the expected body", () => {
+  expect(isOurMessage({ fromMe: true, body: "hello\n" }, "hello")).toBe(true);
+  expect(isOurMessage({ fromMe: true, body: "hello" }, "hello\n")).toBe(true);
 });
 
-test("throws when WhatsApp returned no message", () => {
-  expect(() => assertMessageSent("123@c.us", undefined)).toThrow("could not be resolved");
+test("rejects incoming messages and different bodies", () => {
+  expect(isOurMessage({ fromMe: false, body: "hello" }, "hello")).toBe(false);
+  expect(isOurMessage({ fromMe: true, body: "something else" }, "hello")).toBe(false);
 });
 
 test("labels each acknowledgement value", () => {

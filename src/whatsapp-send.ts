@@ -4,21 +4,15 @@ export interface SentWhatsAppMessage {
 }
 
 /**
- * `client.sendMessage` is typed as `Promise<Message>`, but the implementation
- * returns `undefined` without throwing when WhatsApp cannot resolve the chat or
- * produce a message. Left unchecked that looks like a successful send, so the
- * window gets recorded while nothing was actually sent. Treat it as a failure.
+ * True when a message observed via the chat is our own outgoing message with the
+ * expected body. Used to confirm a send independently of `sendMessage`'s return
+ * value, which the pinned client can leave `undefined` even on success.
  */
-export function assertMessageSent<T extends SentWhatsAppMessage>(
-  chatId: string,
-  message: T | undefined,
-): T {
-  if (message === undefined) {
-    throw new Error(
-      `WhatsApp did not send the message to ${chatId}: it returned no message, so the chat could not be resolved.`,
-    );
-  }
-  return message;
+export function isOurMessage(
+  message: { readonly fromMe: boolean; readonly body: string },
+  expectedBody: string,
+): boolean {
+  return message.fromMe && message.body.trim() === expectedBody.trim();
 }
 
 /** Human label for a WhatsApp message acknowledgement value. */

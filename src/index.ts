@@ -29,7 +29,7 @@ import {
   type WhatsAppGroupBrowserClient,
   type WhatsAppParticipant,
 } from "./whatsapp.js";
-import { assertMessageSent, describeAck } from "./whatsapp-send.js";
+import { describeAck, isOurMessage } from "./whatsapp-send.js";
 
 const { Client, LocalAuth } = WAWebJS;
 
@@ -128,7 +128,7 @@ async function runWeekly(
   // already the canonical chat id, so it is passed through unchanged.
   const selfChatId = client.info.wid._serialized;
   const state = await loadWeeklyState();
-  const recipientChatId = `${phoneDigits(recipient)}@c.us`;
+  const recipientChatId = await resolveRecipientChatId(client, recipient, logger);
   logger.info(
     `Weekly run starting: recipient=${recipientChatId}, self=${selfChatId}, force=${force}, dryRun=${dryRun}.`,
   );
@@ -154,12 +154,7 @@ async function runWeekly(
       return { items: collected.items, warnings: [...warnings, ...collected.warnings] };
     },
     sendMessage: async (chatId, content) => {
-      const message = assertMessageSent(chatId, await client.sendMessage(chatId, content));
-      logger.info(
-        `WhatsApp accepted message ${message.id._serialized} for ${chatId} (ack=${message.ack}: ${describeAck(message.ack)}).`,
-      );
-      const ack = await waitForAcknowledgement(message, logger);
-      logger.info(`Message ${message.id._serialized} settled at ack=${ack} (${describeAck(ack)}).`);
+      await sendWhatsAppMessage(client, chatId, content, logger);
     },
     recipientChatId,
     selfChatId,
@@ -338,6 +333,92 @@ async function waitForAcknowledgement(
     );
   }
   return message.ack;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Resolves a phone number to the id WhatsApp Web actually uses. WhatsApp has
+ * migrated contacts to LID identifiers, and sending straight to `digits@c.us`
+ * fails for any chat the linked device has not opened yet. `getNumberId` asks
+ * WhatsApp for the current id and registers the contact as a side effect.
+ */
+async function resolveRecipientChatId(
+  client: WAWebJS.Client,
+  digits: string,
+  logger: Logger,
+): Promise<string> {
+  const fallback = `${digits}@c.us`;
+  try {
+    const resolved = await client.getNumberId(digits);
+    if (resolved === null) {
+      logger.warn(`WhatsApp reports ${digits} is not registered on WhatsApp; using ${fallback}.`);
+      return fallback;
+    }
+    logger.info(`Resolved ${digits} to ${resolved._serialized}.`);
+    return resolved._serialized;
+  } catch (error) {
+    logger.warn(`getNumberId failed for ${digits} (${errorMessage(error)}); using ${fallback}.`);
+    return fallback;
+  }
+}
+
+/**
+ * Confirms a send by looking for our outgoing message in the chat. The pinned
+ * client returns `undefined` from `sendMessage` even on success (WhatsApp Web
+ * renamed the message id field it reads), so the return value alone cannot be
+ * trusted in either direction.
+ */
+async function confirmSentMessage(
+  client: WAWebJS.Client,
+  chatId: string,
+  content: string,
+  timeoutMs: number,
+): Promise<WAWebJS.Message | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    try {
+      const chat = await client.getChatById(chatId);
+      const recent = await chat.fetchMessages({ limit: 10 });
+      const match = recent.find((message) => isOurMessage(message, content));
+      if (match !== undefined) return match;
+    } catch {
+      // The chat may not be resolvable yet; retry until the deadline.
+    }
+    if (Date.now() >= deadline) return undefined;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+}
+
+async function sendWhatsAppMessage(
+  client: WAWebJS.Client,
+  chatId: string,
+  content: string,
+  logger: Logger,
+): Promise<void> {
+  const message = await client.sendMessage(chatId, content);
+  if (message !== undefined) {
+    logger.info(
+      `WhatsApp accepted message ${message.id._serialized} for ${chatId} (ack=${message.ack}: ${describeAck(message.ack)}).`,
+    );
+    const ack = await waitForAcknowledgement(message, logger);
+    logger.info(`Message ${message.id._serialized} settled at ack=${ack} (${describeAck(ack)}).`);
+    return;
+  }
+  logger.warn(
+    `The send call for ${chatId} returned no message; checking whether it was still created...`,
+  );
+  const confirmed = await confirmSentMessage(client, chatId, content, 10_000);
+  if (confirmed === undefined) {
+    throw new Error(
+      `WhatsApp did not send the message to ${chatId}: the chat could not be resolved and no outgoing message appeared.`,
+    );
+  }
+  logger.info(
+    `WhatsApp created message ${confirmed.id._serialized} for ${chatId} (the send call returned no message, but the outgoing message is present).`,
+  );
 }
 
 function puppeteerOptions() {
