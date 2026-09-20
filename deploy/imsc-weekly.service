@@ -2,6 +2,10 @@
 Description=Send the IMSC weekly engagement report
 After=network-online.target docker.service
 Wants=network-online.target
+# Bound restart attempts so a persistent fault cannot spin indefinitely.
+# StartLimit* live in [Unit]; systemd ignores them in [Service].
+StartLimitBurst=3
+StartLimitIntervalSec=6h
 
 [Service]
 Type=oneshot
@@ -9,5 +13,3 @@ WorkingDirectory=/home/mairaj/Documents/imsc-scraper
 ExecStart=/usr/bin/docker compose run --rm imsc weekly
 Restart=on-failure
 RestartSec=30min
-StartLimitBurst=3
-StartLimitIntervalSec=6h
