@@ -5,6 +5,7 @@ import { createInterface } from "node:readline/promises";
 import select from "@inquirer/select";
 import qrcode from "qrcode-terminal";
 import WAWebJS from "whatsapp-web.js";
+import { parseCommand } from "./commands.js";
 import {
   type AppConfig,
   authDirectory,
@@ -29,14 +30,6 @@ import {
 } from "./whatsapp.js";
 
 const { Client, LocalAuth } = WAWebJS;
-
-type Command = "setup" | "verify" | "weekly";
-
-function commandFromArguments(arguments_: readonly string[]): Command {
-  if (arguments_[0] === "setup") return "setup";
-  if (arguments_[0] === "weekly") return "weekly";
-  return "verify";
-}
 
 function waitForClientReady(client: WAWebJS.Client): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -109,7 +102,7 @@ function phoneDigits(value: string): string {
   return value.replaceAll(/\D/gu, "");
 }
 
-async function runWeekly(client: WAWebJS.Client): Promise<void> {
+async function runWeekly(client: WAWebJS.Client, force: boolean): Promise<void> {
   if (client.pupPage === undefined) {
     throw new Error("WhatsApp Web did not provide a browser page for the weekly report.");
   }
@@ -152,6 +145,7 @@ async function runWeekly(client: WAWebJS.Client): Promise<void> {
     recipientChatId: `${phoneDigits(recipient)}@c.us`,
     selfChatId,
     state,
+    force,
     saveState: saveWeeklyState,
     log: (message) => {
       console.log(message);
@@ -300,7 +294,7 @@ function puppeteerOptions() {
 }
 
 async function main(): Promise<void> {
-  const command = commandFromArguments(process.argv.slice(2));
+  const { command, force } = parseCommand(process.argv.slice(2));
   const client = new Client({
     authStrategy: new LocalAuth({
       clientId: "imsc-scraper",
@@ -329,7 +323,7 @@ async function main(): Promise<void> {
     if (command === "setup") {
       await runSetup(client);
     } else if (command === "weekly") {
-      await runWeekly(client);
+      await runWeekly(client, force);
     } else {
       await verifySelectedChat(client);
     }

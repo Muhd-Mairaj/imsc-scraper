@@ -78,6 +78,11 @@ Sends the configured `weeklyReportRecipient` a WhatsApp message covering the sev
 - An empty week sends a notice to the recipient and to your own number.
 - A failure sends a best-effort alert to your own number, then exits non-zero so the scheduler records the failure.
 - Sends are idempotent per window; the last successfully sent window is recorded in `data/weekly-state.json`.
+- `--force` skips the idempotency check and re-sends the report (and the failure alert) for the current window:
+
+  ```sh
+  bun run dev weekly --force
+  ```
 
 The failure alert is best-effort: it cannot be delivered if WhatsApp itself is unreachable.
 
@@ -144,6 +149,12 @@ Run one report by hand with:
 
 ```sh
 docker compose run --rm imsc weekly
+```
+
+Re-send the current window even if it was already recorded:
+
+```sh
+docker compose run --rm imsc weekly --force
 ```
 
 Failure alerts are best-effort and go to your own number; self-send is verified working on the pinned client version.

@@ -14,6 +14,8 @@ export interface WeeklyRunDependencies {
   readonly sendMessage: (chatId: string, content: string) => Promise<void>;
   readonly recipientChatId: string;
   readonly selfChatId: string | undefined;
+  /** Bypass the recorded send state and run the report for this window anyway. */
+  readonly force: boolean;
   readonly state: WeeklyState;
   readonly saveState: (state: WeeklyState) => Promise<void>;
   readonly log: (message: string) => void;
@@ -41,7 +43,7 @@ async function alertBestEffort(
     dependencies.log("No self chat id is available; skipping the failure alert.");
     return;
   }
-  if (!shouldSendAlert(dependencies.state, window.endMs)) {
+  if (!dependencies.force && !shouldSendAlert(dependencies.state, window.endMs)) {
     dependencies.log("A failure alert was already sent for this window; skipping.");
     return;
   }
@@ -59,7 +61,7 @@ async function alertBestEffort(
 export async function runWeeklyReport(dependencies: WeeklyRunDependencies): Promise<WeeklyOutcome> {
   const window = computeWeeklyWindow(dependencies.now);
 
-  if (!shouldSendReport(dependencies.state, window.endMs)) {
+  if (!dependencies.force && !shouldSendReport(dependencies.state, window.endMs)) {
     dependencies.log(`The weekly report for the window ending ${window.endMs} was already sent.`);
     return { status: "skipped", emptyWeek: false };
   }
