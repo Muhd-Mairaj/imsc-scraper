@@ -10,7 +10,7 @@ export interface WeeklyEngagement {
 
 export interface WeeklyRunDependencies {
   readonly now: Date;
-  readonly collect: () => Promise<WeeklyEngagement>;
+  readonly collect: (window: WeeklyWindow) => Promise<WeeklyEngagement>;
   readonly sendMessage: (chatId: string, content: string) => Promise<void>;
   readonly recipientChatId: string;
   readonly selfChatId: string | undefined;
@@ -65,11 +65,14 @@ export async function runWeeklyReport(dependencies: WeeklyRunDependencies): Prom
   }
 
   try {
-    const collected = await dependencies.collect();
+    const collected = await dependencies.collect(window);
     const body = renderMonthlyActivitySummary(collected.items, collected.warnings);
-    const emptyWeek = body.trim().length === 0;
+    const emptyWeek = collected.items.length === 0;
 
-    await dependencies.sendMessage(dependencies.recipientChatId, renderWeeklyReport(window, body));
+    await dependencies.sendMessage(
+      dependencies.recipientChatId,
+      renderWeeklyReport(window, emptyWeek ? "" : body),
+    );
     await dependencies.saveState({ ...dependencies.state, lastReportWindowEnd: window.endMs });
 
     if (emptyWeek && dependencies.selfChatId !== undefined) {

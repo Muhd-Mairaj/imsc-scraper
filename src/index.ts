@@ -16,7 +16,6 @@ import {
   saveConfig,
 } from "./config.js";
 import { type MonthlyActivityItem, renderMonthlyActivitySummary } from "./report.js";
-import { computeWeeklyWindow } from "./schedule.js";
 import { loadWeeklyState, saveWeeklyState } from "./state.js";
 import { runWeeklyReport } from "./weekly-run.js";
 import {
@@ -129,12 +128,11 @@ async function runWeekly(client: WAWebJS.Client): Promise<void> {
 
   await runWeeklyReport({
     now: new Date(),
-    collect: async () => {
+    collect: async (window) => {
       const probe = await probeWhatsAppGroupHistory(browserClient, config.selectedChat.id);
       if (probe === undefined) {
         throw new Error(`Selected chat metadata is not available for ${config.selectedChat.id}.`);
       }
-      const window = computeWeeklyWindow(new Date());
       const warnings: string[] = [];
       if (
         probe.oldestLoadedTimestampMs === undefined ||

@@ -123,6 +123,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now imsc-weekly.timer
 ```
 
+The unit runs compose as `${IMSC_UID:-1000}:${IMSC_GID:-1000}`. If the owner of `./data` is not uid 1000, put `IMSC_UID` and `IMSC_GID` in `/etc/imsc-weekly.env` (the unit reads it if present). Otherwise the container cannot write `data/weekly-state.json`, and because the report is sent before the state is saved, every retry re-sends it.
+
 Inspect runs and verify the schedule:
 
 ```sh
