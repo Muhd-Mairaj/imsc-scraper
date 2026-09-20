@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the IMSC weekly report every Saturday at 06:00 Asia/Kuala_Lumpur
+
+[Timer]
+OnCalendar=Sat 06:00 Asia/Kuala_Lumpur
+Persistent=true
+Unit=imsc-weekly.service
+
+[Install]
+WantedBy=timers.target
