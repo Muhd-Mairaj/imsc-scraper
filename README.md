@@ -92,6 +92,21 @@ Sends the configured `weeklyReportRecipient` a WhatsApp message covering the sev
 
 The failure alert is best-effort: it cannot be delivered if WhatsApp itself is unreachable.
 
+## Logs
+
+Every run appends timestamped, levelled lines to a daily file under `data/logs/` (`imsc-YYYY-MM-DD.log`, UTC). Each line records the command and runtime, the WhatsApp lifecycle (initialising, ready, authenticated, QR), collection counts and warnings, send/acknowledgement outcomes, and the full stack trace of any failure. The same lines are mirrored to the terminal.
+
+The logger keeps the newest 30 daily files, so a timer-driven server does not fill the disk. Logs live with the rest of the private state under `data/` and are excluded from Git.
+
+```text
+2026-09-20T10:04:31.882Z INFO [weekly] Weekly run starting: recipient=60123456789@c.us, self=60199999999@c.us, force=false, dryRun=false.
+2026-09-20T10:04:31.884Z INFO [weekly] Weekly window: 12/09/2026 – 18/09/2026 (Asia/Kuala_Lumpur), ending 1789747200000.
+2026-09-20T10:04:33.117Z INFO [weekly] Collected 4 activity item(s); the week is not empty.
+2026-09-20T10:04:33.640Z INFO [weekly] WhatsApp accepted message true_60123456789@c.us_3A... for 60123456789@c.us (ack=1: sent to WhatsApp).
+2026-09-20T10:04:35.201Z INFO [weekly] Message true_60123456789@c.us_3A... settled at ack=2 (delivered).
+2026-09-20T10:04:35.205Z INFO [weekly] Sent the weekly report for the window ending 1789747200000.
+```
+
 ## Headless Docker deployment
 
 For a home server, Docker runs Chromium headlessly while keeping WhatsApp session data, configuration, and summaries in the local `data/` directory.
