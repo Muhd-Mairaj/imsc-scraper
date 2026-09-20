@@ -5,6 +5,7 @@ import select from "@inquirer/select";
 import qrcode from "qrcode-terminal";
 import WAWebJS from "whatsapp-web.js";
 import {
+  type AppConfig,
   authDirectory,
   configFilePath,
   loadConfig,
@@ -107,28 +108,23 @@ function formatLocalDate(timestampMs: number): string {
   return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
 }
 
-async function verifySelectedChat(client: WAWebJS.Client): Promise<void> {
-  if (client.pupPage === undefined) {
-    throw new Error("WhatsApp Web did not provide a browser page for selected chat verification.");
-  }
-  const config = await loadConfig();
-  const browserClient = { pupPage: client.pupPage } as WhatsAppGroupBrowserClient;
-  const probe = await probeWhatsAppGroupHistory(browserClient, config.selectedChat.id);
-  if (probe === undefined) {
-    throw new Error(`Selected chat metadata is not available for ${config.selectedChat.id}.`);
-  }
-  const now = new Date();
-  const rangeStartMs = currentMonthStartMs(now);
+interface EngagementCollection {
+  readonly items: readonly MonthlyActivityItem[];
+  readonly warnings: readonly string[];
+}
+
+async function collectEngagement(
+  browserClient: WhatsAppGroupBrowserClient,
+  config: AppConfig,
+  rangeMs: Readonly<{ startMs: number; endMs: number }>,
+): Promise<EngagementCollection> {
   const markers = await discoverWhatsAppWeeklyMarkers(browserClient, {
     chatId: config.selectedChat.id,
-    rangeStartMs,
-    rangeEndMs: now.getTime(),
+    rangeStartMs: rangeMs.startMs,
+    rangeEndMs: rangeMs.endMs,
   });
   const items: MonthlyActivityItem[] = [];
   const warnings: string[] = [];
-  if (probe.oldestLoadedTimestampMs === undefined || probe.oldestLoadedTimestampMs > rangeStartMs) {
-    warnings.push("History may not reach the start of the current month.");
-  }
   for (const marker of markers) {
     const itemDate = formatLocalDate(marker.followingTimestampMs);
     if (marker.followingMessageId === undefined) {
@@ -187,8 +183,33 @@ async function verifySelectedChat(client: WAWebJS.Client): Promise<void> {
       warnings.push(`${itemDate}: uses a same-day replacement after a revoked item.`);
     }
   }
+  return { items, warnings };
+}
 
-  const summary = renderMonthlyActivitySummary(items, warnings);
+async function verifySelectedChat(client: WAWebJS.Client): Promise<void> {
+  if (client.pupPage === undefined) {
+    throw new Error("WhatsApp Web did not provide a browser page for selected chat verification.");
+  }
+  const config = await loadConfig();
+  const browserClient = { pupPage: client.pupPage } as WhatsAppGroupBrowserClient;
+  const probe = await probeWhatsAppGroupHistory(browserClient, config.selectedChat.id);
+  if (probe === undefined) {
+    throw new Error(`Selected chat metadata is not available for ${config.selectedChat.id}.`);
+  }
+  const now = new Date();
+  const rangeStartMs = currentMonthStartMs(now);
+  const warnings: string[] = [];
+  if (probe.oldestLoadedTimestampMs === undefined || probe.oldestLoadedTimestampMs > rangeStartMs) {
+    warnings.push("History may not reach the start of the current month.");
+  }
+  const collected = await collectEngagement(browserClient, config, {
+    startMs: rangeStartMs,
+    endMs: now.getTime(),
+  });
+  const summary = renderMonthlyActivitySummary(collected.items, [
+    ...warnings,
+    ...collected.warnings,
+  ]);
   stdout.write(summary);
   await writeFile(monthlySummaryFilePath(now), summary, { encoding: "utf8", mode: 0o600 });
 }
