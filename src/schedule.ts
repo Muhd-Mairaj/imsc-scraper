@@ -3,7 +3,7 @@ import { DateTime } from "luxon";
 export const WEEKLY_TIME_ZONE = "Asia/Kuala_Lumpur";
 
 const DAY_MS = 86_400_000;
-const SATURDAY = 6;
+const SATURDAY = 6; // luxon weekday scale: Monday = 1 … Sunday = 7
 
 export interface WeeklyWindow {
   readonly startMs: number;

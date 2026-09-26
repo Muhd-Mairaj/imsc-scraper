@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
+import { phoneDigits } from "./utils.js";
 
 export interface SelectedChatConfig {
   id: string;
@@ -28,7 +29,7 @@ const configSchema = z.object({
 });
 
 export function normalizePhoneNumbers(values: readonly string[]): readonly string[] {
-  return [...new Set(values.map((value) => value.replaceAll(/\D/gu, "")).filter(Boolean))];
+  return [...new Set(values.map((value) => phoneDigits(value)).filter(Boolean))];
 }
 
 export async function saveConfig(config: AppConfig): Promise<void> {

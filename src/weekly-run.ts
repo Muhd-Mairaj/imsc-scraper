@@ -6,6 +6,7 @@ import {
   type WeeklyWindow,
 } from "./schedule.js";
 import { shouldSendAlert, shouldSendReport, type WeeklyState } from "./state.js";
+import { errorMessage } from "./utils.js";
 import { renderFailureAlert, renderWeeklyReport } from "./weekly.js";
 
 export interface WeeklyEngagement {
@@ -31,10 +32,6 @@ export interface WeeklyRunDependencies {
 export interface WeeklyOutcome {
   readonly status: "sent" | "skipped" | "dry-run";
   readonly emptyWeek: boolean;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /** Best effort: a failed alert is logged, and the original error still propagates. */

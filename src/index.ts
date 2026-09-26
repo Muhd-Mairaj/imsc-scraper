@@ -23,6 +23,7 @@ import {
   renderMonthlyActivitySummary,
 } from "./report.js";
 import { loadWeeklyState, saveWeeklyState } from "./state.js";
+import { describeAck, errorMessage, phoneDigits } from "./utils.js";
 import { runWeeklyReport } from "./weekly-run.js";
 import {
   discoverWhatsAppWeeklyMarkers,
@@ -35,7 +36,6 @@ import {
   type WhatsAppParticipant,
   type WhatsAppSentMessageConfirmation,
 } from "./whatsapp.js";
-import { describeAck } from "./whatsapp-send.js";
 
 const { Client, LocalAuth } = WAWebJS;
 
@@ -107,10 +107,6 @@ async function runSetup(client: WAWebJS.Client, logger: Logger): Promise<void> {
     `Saved configuration: group "${selectedChat.name}" (${selectedChat.id}), ${ignoredPhoneNumbers.length} ignored number(s), weekly recipient ${weeklyReportRecipient ?? "unset"}.`,
   );
   console.log(`Saved “${selectedChat.name}” to ${configFilePath}`);
-}
-
-function phoneDigits(value: string): string {
-  return value.replaceAll(/\D/gu, "");
 }
 
 async function runWeekly(
@@ -308,10 +304,6 @@ async function waitForAcknowledgement(
     );
   }
   return message.ack;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /**

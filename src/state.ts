@@ -3,17 +3,14 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 import { dataDirectory } from "./config.js";
 
-export interface WeeklyState {
-  readonly lastReportWindowEnd: number | undefined;
-  readonly lastAlertWindowEnd: number | undefined;
-}
-
 export const weeklyStateFilePath = join(dataDirectory, "weekly-state.json");
 
 const stateSchema = z.object({
   lastReportWindowEnd: z.number().optional(),
   lastAlertWindowEnd: z.number().optional(),
 });
+
+export type WeeklyState = z.infer<typeof stateSchema>;
 
 const EMPTY_STATE: WeeklyState = Object.freeze({
   lastReportWindowEnd: undefined,

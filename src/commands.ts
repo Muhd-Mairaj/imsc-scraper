@@ -1,3 +1,5 @@
+import { parseArgs } from "node:util";
+
 export type Command = "setup" | "verify" | "weekly";
 
 export interface CommandArguments {
@@ -6,21 +8,20 @@ export interface CommandArguments {
   readonly dryRun: boolean;
 }
 
-const FORCE_FLAG = "--force";
-const DRY_RUN_FLAG = "--dry-run";
-
-/** These flags only apply to the weekly run; using them elsewhere is an error. */
+/** `--force` and `--dry-run` only apply to `weekly`; using them elsewhere is an error. */
 export function parseCommand(arguments_: readonly string[]): CommandArguments {
-  const force = arguments_.includes(FORCE_FLAG);
-  const dryRun = arguments_.includes(DRY_RUN_FLAG);
-  const [first] = arguments_.filter(
-    (argument) => argument !== FORCE_FLAG && argument !== DRY_RUN_FLAG,
-  );
-  const command: Command = first === "setup" ? "setup" : first === "weekly" ? "weekly" : "verify";
-  for (const flag of [FORCE_FLAG, DRY_RUN_FLAG]) {
-    if (arguments_.includes(flag) && command !== "weekly") {
-      throw new Error(`${flag} is only supported by the weekly command.`);
-    }
+  const { values, positionals } = parseArgs({
+    args: [...arguments_],
+    options: { force: { type: "boolean" }, "dry-run": { type: "boolean" } },
+    allowPositionals: true,
+    strict: false,
+  });
+  const [first] = positionals;
+  const command: Command = first === "setup" || first === "weekly" ? first : "verify";
+  const force = values.force === true;
+  const dryRun = values["dry-run"] === true;
+  if (command !== "weekly" && (force || dryRun)) {
+    throw new Error(`${force ? "--force" : "--dry-run"} is only supported by the weekly command.`);
   }
   return { command, force, dryRun };
 }
