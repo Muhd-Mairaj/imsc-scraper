@@ -1,3 +1,5 @@
+import { DateTime } from "luxon";
+
 export type ActivityValue = 1 | 2;
 
 export interface MonthlyActivityItem {
@@ -6,9 +8,9 @@ export interface MonthlyActivityItem {
   readonly participantDisplays: readonly string[];
 }
 
-function dateHeading(timestampMs: number): string {
-  const date = new Date(timestampMs);
-  return `*${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}*`;
+/** `DD/MM/YYYY` in the process time zone. */
+export function formatActivityDate(timestampMs: number): string {
+  return DateTime.fromMillis(timestampMs).toFormat("dd/MM/yyyy");
 }
 
 export function renderMonthlyActivitySummary(
@@ -17,11 +19,11 @@ export function renderMonthlyActivitySummary(
 ): string {
   const sections = new Map<string, { timestampMs: number; lines: string[] }>();
   for (const item of [...items].sort((left, right) => left.timestampMs - right.timestampMs)) {
-    const heading = dateHeading(item.timestampMs);
+    const heading = `*${formatActivityDate(item.timestampMs)}*`;
     const section = sections.get(heading) ?? { timestampMs: item.timestampMs, lines: [] };
-    section.lines.push(
-      ...item.participantDisplays.map((display) => `${display} - ${item.activity}`),
-    );
+    for (const display of item.participantDisplays) {
+      section.lines.push(`${display} - ${item.activity}`);
+    }
     sections.set(heading, section);
   }
 
@@ -29,9 +31,9 @@ export function renderMonthlyActivitySummary(
   for (const [heading, section] of [...sections.entries()].sort(
     ([, left], [, right]) => left.timestampMs - right.timestampMs,
   )) {
-    output.push(heading, ...section.lines.sort((left, right) => left.localeCompare(right)));
-    output.push("");
+    output.push(heading, ...section.lines.sort((left, right) => left.localeCompare(right)), "");
   }
+
   const uniqueWarnings = [...new Set(warnings)];
   if (uniqueWarnings.length > 0) {
     if (output.length > 0) output.push("");
