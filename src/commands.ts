@@ -9,10 +9,7 @@ export interface CommandArguments {
 const FORCE_FLAG = "--force";
 const DRY_RUN_FLAG = "--dry-run";
 
-/**
- * `--force` and `--dry-run` only affect the weekly run, so using them anywhere
- * else is a mistake worth failing on rather than silently accepting.
- */
+/** These flags only apply to the weekly run; using them elsewhere is an error. */
 export function parseCommand(arguments_: readonly string[]): CommandArguments {
   const force = arguments_.includes(FORCE_FLAG);
   const dryRun = arguments_.includes(DRY_RUN_FLAG);

@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export interface WhatsAppGroupReference {
   readonly id: string;
   readonly name: string;
@@ -9,42 +11,36 @@ export interface WhatsAppGroupBrowserClient {
   };
 }
 
-export interface WhatsAppGroupHistoryProbe {
-  readonly group: WhatsAppGroupReference;
-  readonly loadedMessageCountBefore: number;
-  readonly newlyLoadedMessageCount: number | undefined;
-  readonly loadedMessageCountAfter: number;
-  readonly oldestLoadedTimestampMs: number | undefined;
-  readonly newestLoadedTimestampMs: number | undefined;
+interface Evaluator {
+  evaluate<T, A>(pageFunction: (argument: A) => T | Promise<T>, argument: A): Promise<T>;
 }
 
+// `pupPage.evaluate` is declared without arguments by the client type so callers
+// (and test stubs) stay simple; the real page evaluate accepts one argument.
+function evaluator(client: WhatsAppGroupBrowserClient): Evaluator {
+  return client.pupPage as unknown as Evaluator;
+}
+
+const groupSchema = z.object({ id: z.string(), name: z.unknown().optional() });
+
 function normalizedGroup(value: unknown): WhatsAppGroupReference | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const fields = value as Readonly<Record<string, unknown>>;
-  if (typeof fields.id !== "string" || !/\S/u.test(fields.id)) return undefined;
-  const name = typeof fields.name === "string" ? fields.name.trim() : "";
+  const parsed = groupSchema.safeParse(value);
+  if (!parsed.success || !/\S/u.test(parsed.data.id)) return undefined;
+  const name = typeof parsed.data.name === "string" ? parsed.data.name.trim() : "";
   return Object.freeze({
-    id: fields.id.trim(),
+    id: parsed.data.id.trim(),
     name: name.length === 0 ? "Unnamed group" : name,
   });
 }
 
 function compareGroups(left: WhatsAppGroupReference, right: WhatsAppGroupReference): number {
-  return left.name < right.name
-    ? -1
-    : left.name > right.name
-      ? 1
-      : left.id < right.id
-        ? -1
-        : left.id > right.id
-          ? 1
-          : 0;
+  return left.name.localeCompare(right.name) || left.id.localeCompare(right.id);
 }
 
 export async function listWhatsAppGroups(
   client: WhatsAppGroupBrowserClient,
 ): Promise<readonly WhatsAppGroupReference[]> {
-  const candidates = await client.pupPage.evaluate(() => {
+  const candidates = await evaluator(client).evaluate(() => {
     const browser = globalThis as unknown as {
       readonly require: (moduleName: string) => {
         readonly Chat: {
@@ -52,20 +48,22 @@ export async function listWhatsAppGroups(
         };
       };
     };
-    const chats = browser.require("WAWebCollections").Chat.getModelsArray();
-    return chats.flatMap((chat) => {
-      const id = (chat.id as { readonly _serialized?: unknown } | undefined)?._serialized;
-      const isGroup = chat.isGroup === true || chat.groupMetadata !== undefined;
-      if (typeof id !== "string" || !isGroup) return [];
-      const name =
-        typeof chat.formattedTitle === "string"
-          ? chat.formattedTitle
-          : typeof chat.name === "string"
-            ? chat.name
-            : "";
-      return [{ id, name }];
-    });
-  });
+    return browser
+      .require("WAWebCollections")
+      .Chat.getModelsArray()
+      .flatMap((chat) => {
+        const id = (chat.id as { readonly _serialized?: unknown } | undefined)?._serialized;
+        const isGroup = chat.isGroup === true || chat.groupMetadata !== undefined;
+        if (typeof id !== "string" || !isGroup) return [];
+        const name =
+          typeof chat.formattedTitle === "string"
+            ? chat.formattedTitle
+            : typeof chat.name === "string"
+              ? chat.name
+              : "";
+        return [{ id, name }];
+      });
+  }, undefined);
 
   const unique = new Map<string, WhatsAppGroupReference>();
   for (const candidate of candidates) {
@@ -75,17 +73,30 @@ export async function listWhatsAppGroups(
   return Object.freeze([...unique.values()].sort(compareGroups));
 }
 
+export interface WhatsAppGroupHistoryProbe {
+  readonly group: WhatsAppGroupReference;
+  readonly loadedMessageCountBefore: number;
+  readonly newlyLoadedMessageCount: number | undefined;
+  readonly loadedMessageCountAfter: number;
+  readonly oldestLoadedTimestampMs: number | undefined;
+  readonly newestLoadedTimestampMs: number | undefined;
+}
+
+const historyProbeSchema = z.object({
+  id: z.string(),
+  name: z.string().optional(),
+  loadedMessageCountBefore: z.number(),
+  newlyLoadedMessageCount: z.number().optional(),
+  loadedMessageCountAfter: z.number(),
+  oldestLoadedTimestampMs: z.number().optional(),
+  newestLoadedTimestampMs: z.number().optional(),
+});
+
 export async function probeWhatsAppGroupHistory(
   client: WhatsAppGroupBrowserClient,
   chatId: string,
 ): Promise<WhatsAppGroupHistoryProbe | undefined> {
-  const page = client.pupPage as unknown as {
-    readonly evaluate: <T, A>(
-      pageFunction: (argument: A) => T | Promise<T>,
-      argument: A,
-    ) => Promise<T>;
-  };
-  const result = await page.evaluate(async (requestedChatId) => {
+  const result = await evaluator(client).evaluate(async (requestedChatId) => {
     const browser = globalThis as unknown as {
       readonly require: (moduleName: string) => unknown;
     };
@@ -108,12 +119,13 @@ export async function probeWhatsAppGroupHistory(
     };
     if (messages?.getModelsArray === undefined) return undefined;
     const before = messages.getModelsArray();
-    const loader = browser.require("WAWebChatLoadMessages") as {
-      readonly loadEarlierMsgs: (input: {
-        readonly chat: Record<string, unknown>;
-      }) => Promise<unknown>;
-    };
-    const loaded = await loader.loadEarlierMsgs({ chat });
+    const loaded = await (
+      browser.require("WAWebChatLoadMessages") as {
+        readonly loadEarlierMsgs: (input: {
+          readonly chat: Record<string, unknown>;
+        }) => Promise<unknown>;
+      }
+    ).loadEarlierMsgs({ chat });
     const after = messages.getModelsArray();
     const timestamps = after.flatMap((message) =>
       typeof message.t === "number" && Number.isFinite(message.t) ? [message.t * 1_000] : [],
@@ -133,33 +145,18 @@ export async function probeWhatsAppGroupHistory(
       newestLoadedTimestampMs: timestamps.length === 0 ? undefined : Math.max(...timestamps),
     };
   }, chatId);
-  if (result === undefined) return undefined;
 
-  const group = normalizedGroup(result);
+  const parsed = historyProbeSchema.safeParse(result);
+  if (!parsed.success) return undefined;
+  const group = normalizedGroup(parsed.data);
   if (group === undefined) return undefined;
-  const fields = result as Readonly<Record<string, unknown>>;
-  if (
-    typeof fields.loadedMessageCountBefore !== "number" ||
-    typeof fields.loadedMessageCountAfter !== "number"
-  ) {
-    return undefined;
-  }
   return Object.freeze({
     group,
-    loadedMessageCountBefore: fields.loadedMessageCountBefore,
-    newlyLoadedMessageCount:
-      typeof fields.newlyLoadedMessageCount === "number"
-        ? fields.newlyLoadedMessageCount
-        : undefined,
-    loadedMessageCountAfter: fields.loadedMessageCountAfter,
-    oldestLoadedTimestampMs:
-      typeof fields.oldestLoadedTimestampMs === "number"
-        ? fields.oldestLoadedTimestampMs
-        : undefined,
-    newestLoadedTimestampMs:
-      typeof fields.newestLoadedTimestampMs === "number"
-        ? fields.newestLoadedTimestampMs
-        : undefined,
+    loadedMessageCountBefore: parsed.data.loadedMessageCountBefore,
+    newlyLoadedMessageCount: parsed.data.newlyLoadedMessageCount,
+    loadedMessageCountAfter: parsed.data.loadedMessageCountAfter,
+    oldestLoadedTimestampMs: parsed.data.oldestLoadedTimestampMs,
+    newestLoadedTimestampMs: parsed.data.newestLoadedTimestampMs,
   });
 }
 
@@ -173,6 +170,16 @@ export interface WhatsAppWeeklyMarkerCandidate {
   readonly recoveredAfterRevoked: boolean;
 }
 
+const markerSchema = z.object({
+  markerTimestampMs: z.number(),
+  markerText: z.string(),
+  followingTimestampMs: z.number(),
+  followingType: z.string(),
+  followingMessageId: z.string().optional(),
+  followingHasReaction: z.boolean(),
+  recoveredAfterRevoked: z.boolean(),
+});
+
 export async function discoverWhatsAppWeeklyMarkers(
   client: WhatsAppGroupBrowserClient,
   input: Readonly<{
@@ -181,22 +188,17 @@ export async function discoverWhatsAppWeeklyMarkers(
     rangeEndMs: number;
   }>,
 ): Promise<readonly WhatsAppWeeklyMarkerCandidate[]> {
-  const page = client.pupPage as unknown as {
-    readonly evaluate: <T, A>(
-      pageFunction: (argument: A) => T | Promise<T>,
-      argument: A,
-    ) => Promise<T>;
-  };
-  const candidates = await page.evaluate((range) => {
+  const candidates = await evaluator(client).evaluate((range) => {
     const browser = globalThis as unknown as {
       readonly require: (moduleName: string) => unknown;
     };
-    const collections = browser.require("WAWebCollections") as {
-      readonly Chat: {
-        readonly getModelsArray: () => readonly Record<string, unknown>[];
-      };
-    };
-    const chat = collections.Chat.getModelsArray().find(
+    const chat = (
+      browser.require("WAWebCollections") as {
+        readonly Chat: {
+          readonly getModelsArray: () => readonly Record<string, unknown>[];
+        };
+      }
+    ).Chat.getModelsArray().find(
       (candidate) =>
         (candidate.id as { readonly _serialized?: unknown } | undefined)?._serialized ===
         range.chatId,
@@ -223,20 +225,14 @@ export async function discoverWhatsAppWeeklyMarkers(
       const markerText = normalizedText(marker);
       const markerTimestampMs = typeof marker.t === "number" ? marker.t * 1_000 : undefined;
       let following = ordered[index + 1];
-      // When the next post is the following week's title, this week had no
-      // engagement post; don't attribute that title to this week.
-      if (following !== undefined && isWeeklyTitle(following)) {
-        return [];
-      }
+      // If the next post is already the following week's title, this week had no
+      // engagement post; the title belongs to the next week.
+      if (following !== undefined && isWeeklyTitle(following)) return [];
       let recoveredAfterRevoked = false;
       if (following?.type === "revoked" && markerTimestampMs !== undefined) {
         const markerDate = new Date(markerTimestampMs).toDateString();
-        for (
-          let replacementIndex = index + 2;
-          replacementIndex < ordered.length;
-          replacementIndex += 1
-        ) {
-          const replacement = ordered[replacementIndex];
+        for (let i = index + 2; i < ordered.length; i += 1) {
+          const replacement = ordered[i];
           const replacementTimestampMs =
             typeof replacement?.t === "number" ? replacement.t * 1_000 : undefined;
           if (
@@ -281,17 +277,22 @@ export async function discoverWhatsAppWeeklyMarkers(
     });
   }, input);
 
-  return Object.freeze(
-    candidates.filter(
-      (candidate): candidate is WhatsAppWeeklyMarkerCandidate =>
-        typeof candidate.markerTimestampMs === "number" &&
-        typeof candidate.markerText === "string" &&
-        typeof candidate.followingTimestampMs === "number" &&
-        typeof candidate.followingType === "string" &&
-        typeof candidate.followingHasReaction === "boolean" &&
-        typeof candidate.recoveredAfterRevoked === "boolean",
-    ),
-  );
+  const markers = candidates.flatMap((candidate) => {
+    const parsed = markerSchema.safeParse(candidate);
+    if (!parsed.success) return [];
+    return [
+      {
+        markerTimestampMs: parsed.data.markerTimestampMs,
+        markerText: parsed.data.markerText,
+        followingTimestampMs: parsed.data.followingTimestampMs,
+        followingType: parsed.data.followingType,
+        followingMessageId: parsed.data.followingMessageId,
+        followingHasReaction: parsed.data.followingHasReaction,
+        recoveredAfterRevoked: parsed.data.recoveredAfterRevoked,
+      },
+    ];
+  });
+  return Object.freeze(markers);
 }
 
 export interface WhatsAppParticipant {
@@ -299,22 +300,100 @@ export interface WhatsAppParticipant {
   readonly phoneNumber: string | undefined;
 }
 
-function participantRecords(value: unknown): readonly WhatsAppParticipant[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const participants = value.flatMap((participant) => {
-    if (typeof participant !== "object" || participant === null || Array.isArray(participant)) {
-      return [];
+const participantSchema = z.object({
+  display: z.string(),
+  phoneNumber: z.string().optional(),
+});
+
+const participantKeysSchema = z.object({ recordCount: z.number(), keys: z.array(z.string()) });
+
+const resolvedParticipantsSchema = z.object({
+  participants: z.array(participantSchema),
+  unresolvedParticipantCount: z.number(),
+});
+
+interface ResolvedParticipants {
+  readonly participants: readonly WhatsAppParticipant[];
+  readonly unresolvedParticipantCount: number;
+}
+
+/**
+ * Resolves participant ids to display names and phone numbers. Shared because
+ * the poll and reaction probes would otherwise carry identical copies; the
+ * work still happens inside the page, where the WhatsApp store lives.
+ */
+async function resolveWhatsAppParticipants(
+  client: WhatsAppGroupBrowserClient,
+  participantKeys: readonly string[],
+): Promise<ResolvedParticipants | undefined> {
+  const result = await evaluator(client).evaluate(async (keys) => {
+    const browser = globalThis as unknown as {
+      readonly require: (moduleName: string) => unknown;
+    };
+    const widFactory = browser.require("WAWebWidFactory") as {
+      readonly createWid: (value: string) => unknown;
+    };
+    const contacts = browser.require("WAWebCollections") as {
+      readonly Contact: { readonly find: (value: unknown) => Promise<Record<string, unknown>> };
+    };
+    const apiContact = browser.require("WAWebApiContact") as {
+      readonly getPhoneNumber: (value: unknown) => unknown;
+    };
+    const phoneText = (value: unknown): string => {
+      if (typeof value === "string") return value;
+      const user = (value as { readonly user?: unknown } | undefined)?.user;
+      if (typeof user === "string") return user;
+      const stringify = (value as { readonly toString?: unknown } | undefined)?.toString;
+      return typeof stringify === "function"
+        ? (value as { readonly toString: () => string }).toString()
+        : "";
+    };
+
+    const byDisplay = new Map<string, WhatsAppParticipant>();
+    let unresolvedParticipantCount = 0;
+    for (const key of keys) {
+      try {
+        const wid = widFactory.createWid(key);
+        const contact = await contacts.Contact.find(wid);
+        const username = typeof contact?.username === "string" ? contact.username.trim() : "";
+        const phoneNumber =
+          phoneText(contact?.phoneNumber ?? apiContact.getPhoneNumber(wid)).replaceAll(
+            /\D/gu,
+            "",
+          ) || undefined;
+        const display =
+          username.length > 0
+            ? username.startsWith("@")
+              ? username
+              : `@${username}`
+            : phoneNumber === undefined
+              ? undefined
+              : `+${phoneNumber}`;
+        if (display === undefined) unresolvedParticipantCount += 1;
+        else byDisplay.set(display, { display, phoneNumber });
+      } catch {
+        unresolvedParticipantCount += 1;
+      }
     }
-    const fields = participant as Readonly<Record<string, unknown>>;
-    if (
-      typeof fields.display !== "string" ||
-      (fields.phoneNumber !== undefined && typeof fields.phoneNumber !== "string")
-    ) {
-      return [];
-    }
-    return [{ display: fields.display, phoneNumber: fields.phoneNumber }];
+    return {
+      participants: [...byDisplay.values()].sort((left, right) =>
+        left.display.localeCompare(right.display),
+      ),
+      unresolvedParticipantCount,
+    };
+  }, participantKeys);
+
+  const parsed = resolvedParticipantsSchema.safeParse(result);
+  if (!parsed.success) return undefined;
+  return Object.freeze({
+    participants: Object.freeze(
+      parsed.data.participants.map((participant) => ({
+        display: participant.display,
+        phoneNumber: participant.phoneNumber,
+      })),
+    ),
+    unresolvedParticipantCount: parsed.data.unresolvedParticipantCount,
   });
-  return participants.length === value.length ? Object.freeze(participants) : undefined;
 }
 
 export interface WhatsAppPollParticipantProbe {
@@ -327,13 +406,7 @@ export async function probeWhatsAppPollParticipants(
   client: WhatsAppGroupBrowserClient,
   pollMessageId: string,
 ): Promise<WhatsAppPollParticipantProbe | undefined> {
-  const page = client.pupPage as unknown as {
-    readonly evaluate: <T, A>(
-      pageFunction: (argument: A) => T | Promise<T>,
-      argument: A,
-    ) => Promise<T>;
-  };
-  const result = await page.evaluate(async (messageId) => {
+  const gathered = await evaluator(client).evaluate(async (messageId) => {
     const browser = globalThis as unknown as {
       readonly require: (moduleName: string) => unknown;
     };
@@ -353,97 +426,24 @@ export async function probeWhatsAppPollParticipants(
       .equals(["parentMsgKey"], messageKey.toString());
     if (!Array.isArray(voteRows)) return undefined;
 
-    const participantKeys = new Set(
-      voteRows.flatMap((row) => {
-        const sender = (row as { readonly sender?: unknown }).sender as
-          | { readonly toString?: () => string }
-          | undefined;
-        return typeof sender?.toString === "function" ? [sender.toString()] : [];
-      }),
-    );
-    const participants: { display: string; phoneNumber: string | undefined }[] = [];
-    let unresolvedParticipantCount = 0;
-    for (const participantKey of participantKeys) {
-      try {
-        const wid = (
-          browser.require("WAWebWidFactory") as {
-            readonly createWid: (value: string) => unknown;
-          }
-        ).createWid(participantKey);
-        const contact = await (
-          browser.require("WAWebCollections") as {
-            readonly Contact: {
-              readonly find: (value: unknown) => Promise<Record<string, unknown>>;
-            };
-          }
-        ).Contact.find(wid);
-        const username = typeof contact?.username === "string" ? contact.username.trim() : "";
-        const directPhone = contact?.phoneNumber;
-        const phoneValue =
-          directPhone ??
-          (
-            browser.require("WAWebApiContact") as {
-              readonly getPhoneNumber: (value: unknown) => unknown;
-            }
-          ).getPhoneNumber(wid);
-        const phoneText =
-          typeof phoneValue === "string"
-            ? phoneValue
-            : typeof (phoneValue as { readonly user?: unknown } | undefined)?.user === "string"
-              ? (phoneValue as { readonly user: string }).user
-              : typeof (phoneValue as { readonly toString?: unknown } | undefined)?.toString ===
-                  "function"
-                ? (phoneValue as { readonly toString: () => string }).toString()
-                : "";
-        const phoneNumber = phoneText.replaceAll(/\D/gu, "") || undefined;
-        const display =
-          username.length > 0
-            ? username.startsWith("@")
-              ? username
-              : `@${username}`
-            : phoneNumber === undefined
-              ? undefined
-              : `+${phoneNumber}`;
-        if (display === undefined) {
-          unresolvedParticipantCount += 1;
-        } else {
-          participants.push({ display, phoneNumber });
-        }
-      } catch {
-        unresolvedParticipantCount += 1;
-      }
+    const keys = new Set<string>();
+    for (const row of voteRows) {
+      const sender = (row as { readonly sender?: unknown }).sender as
+        | { readonly toString?: () => string }
+        | undefined;
+      if (typeof sender?.toString === "function") keys.add(sender.toString());
     }
-    const participantsByDisplay = new Map<
-      string,
-      { display: string; phoneNumber: string | undefined }
-    >();
-    for (const participant of participants) {
-      participantsByDisplay.set(participant.display, participant);
-    }
-    const sortedParticipants = [...participantsByDisplay.values()].sort((left, right) =>
-      left.display.localeCompare(right.display),
-    );
-    return {
-      voteRecordCount: voteRows.length,
-      participants: sortedParticipants,
-      unresolvedParticipantCount,
-    };
+    return { recordCount: voteRows.length, keys: [...keys] };
   }, pollMessageId);
-  if (result === undefined) return undefined;
 
-  const fields = result as Readonly<Record<string, unknown>>;
-  const participants = participantRecords(fields.participants);
-  if (
-    typeof fields.voteRecordCount !== "number" ||
-    participants === undefined ||
-    typeof fields.unresolvedParticipantCount !== "number"
-  ) {
-    return undefined;
-  }
+  const parsed = participantKeysSchema.safeParse(gathered);
+  if (!parsed.success) return undefined;
+  const resolved = await resolveWhatsAppParticipants(client, parsed.data.keys);
+  if (resolved === undefined) return undefined;
   return Object.freeze({
-    voteRecordCount: fields.voteRecordCount,
-    participants,
-    unresolvedParticipantCount: fields.unresolvedParticipantCount,
+    voteRecordCount: parsed.data.recordCount,
+    participants: resolved.participants,
+    unresolvedParticipantCount: resolved.unresolvedParticipantCount,
   });
 }
 
@@ -465,13 +465,8 @@ export async function probeWhatsAppReactionParticipants(
       unresolvedParticipantCount: 0,
     });
   }
-  const page = client.pupPage as unknown as {
-    readonly evaluate: <T, A>(
-      pageFunction: (argument: A) => T | Promise<T>,
-      argument: A,
-    ) => Promise<T>;
-  };
-  const result = await page.evaluate(async (reactionMessageId) => {
+
+  const gathered = await evaluator(client).evaluate(async (reactionMessageId) => {
     const browser = globalThis as unknown as {
       readonly require: (moduleName: string) => unknown;
     };
@@ -497,96 +492,22 @@ export async function probeWhatsAppReactionParticipants(
         ? (value as { readonly toString: () => string }).toString()
         : undefined;
     };
-    const participantKeys = new Set(
-      senderRecords.flatMap((sender) => {
-        const key = senderKey(sender);
-        return key === undefined ? [] : [key];
-      }),
-    );
-
-    const participants: { display: string; phoneNumber: string | undefined }[] = [];
-    let unresolvedParticipantCount = 0;
-    for (const participantKey of participantKeys) {
-      try {
-        const wid = (
-          browser.require("WAWebWidFactory") as {
-            readonly createWid: (value: string) => unknown;
-          }
-        ).createWid(participantKey);
-        const contact = await (
-          browser.require("WAWebCollections") as {
-            readonly Contact: {
-              readonly find: (value: unknown) => Promise<Record<string, unknown>>;
-            };
-          }
-        ).Contact.find(wid);
-        const username = typeof contact?.username === "string" ? contact.username.trim() : "";
-        const directPhone = contact?.phoneNumber;
-        const phoneValue =
-          directPhone ??
-          (
-            browser.require("WAWebApiContact") as {
-              readonly getPhoneNumber: (value: unknown) => unknown;
-            }
-          ).getPhoneNumber(wid);
-        const phoneText =
-          typeof phoneValue === "string"
-            ? phoneValue
-            : typeof (phoneValue as { readonly user?: unknown } | undefined)?.user === "string"
-              ? (phoneValue as { readonly user: string }).user
-              : typeof (phoneValue as { readonly toString?: unknown } | undefined)?.toString ===
-                  "function"
-                ? (phoneValue as { readonly toString: () => string }).toString()
-                : "";
-        const phoneNumber = phoneText.replaceAll(/\D/gu, "") || undefined;
-        const display =
-          username.length > 0
-            ? username.startsWith("@")
-              ? username
-              : `@${username}`
-            : phoneNumber === undefined
-              ? undefined
-              : `+${phoneNumber}`;
-        if (display === undefined) {
-          unresolvedParticipantCount += 1;
-        } else {
-          participants.push({ display, phoneNumber });
-        }
-      } catch {
-        unresolvedParticipantCount += 1;
-      }
+    const keys = new Set<string>();
+    for (const sender of senderRecords) {
+      const key = senderKey(sender);
+      if (key !== undefined) keys.add(key);
     }
-    const participantsByDisplay = new Map<
-      string,
-      { display: string; phoneNumber: string | undefined }
-    >();
-    for (const participant of participants) {
-      participantsByDisplay.set(participant.display, participant);
-    }
-    const sortedParticipants = [...participantsByDisplay.values()].sort((left, right) =>
-      left.display.localeCompare(right.display),
-    );
-    return {
-      reactionSenderRecordCount: senderRecords.length,
-      participants: sortedParticipants,
-      unresolvedParticipantCount,
-    };
+    return { recordCount: senderRecords.length, keys: [...keys] };
   }, messageId);
-  if (result === undefined) return undefined;
 
-  const fields = result as Readonly<Record<string, unknown>>;
-  const participants = participantRecords(fields.participants);
-  if (
-    typeof fields.reactionSenderRecordCount !== "number" ||
-    participants === undefined ||
-    typeof fields.unresolvedParticipantCount !== "number"
-  ) {
-    return undefined;
-  }
+  const parsed = participantKeysSchema.safeParse(gathered);
+  if (!parsed.success) return undefined;
+  const resolved = await resolveWhatsAppParticipants(client, parsed.data.keys);
+  if (resolved === undefined) return undefined;
   return Object.freeze({
-    reactionSenderRecordCount: fields.reactionSenderRecordCount,
-    participants,
-    unresolvedParticipantCount: fields.unresolvedParticipantCount,
+    reactionSenderRecordCount: parsed.data.recordCount,
+    participants: resolved.participants,
+    unresolvedParticipantCount: resolved.unresolvedParticipantCount,
   });
 }
 
@@ -596,53 +517,58 @@ export interface WhatsAppSentMessageConfirmation {
 }
 
 /**
- * Finds our own outgoing message in a chat's already-loaded messages, without
- * going through `getChatById` (whose model conversion is unstable on the pinned
- * client). This is how a send is confirmed: `client.sendMessage` can report
- * nothing even when the message was delivered.
+ * Finds our outgoing message in a chat's loaded messages without `getChatById`
+ * (its model conversion is unstable on the pinned client). The report body is
+ * identical every run, so only messages at or after `sinceSeconds` are
+ * considered and the newest wins, lest a retry confirm itself against an old
+ * copy.
  */
 export async function findWhatsAppSentMessage(
   client: WhatsAppGroupBrowserClient,
   chatId: string,
   body: string,
+  sinceSeconds?: number,
 ): Promise<WhatsAppSentMessageConfirmation | undefined> {
-  const page = client.pupPage as unknown as {
-    readonly evaluate: <T, A>(
-      pageFunction: (argument: A) => T | Promise<T>,
-      argument: A,
-    ) => Promise<T>;
-  };
-  return await page.evaluate(
-    async (request: { readonly chatId: string; readonly expected: string }) => {
+  return await evaluator(client).evaluate(
+    async (request: {
+      readonly chatId: string;
+      readonly expected: string;
+      readonly since: number | undefined;
+    }) => {
       const browser = globalThis as unknown as {
         readonly require: (moduleName: string) => unknown;
       };
-      const widFactory = browser.require("WAWebWidFactory") as {
-        readonly createWid: (id: string) => unknown;
-      };
-      const collections = browser.require("WAWebCollections") as {
-        readonly Chat: {
-          readonly get: (wid: unknown) => Record<string, unknown> | undefined;
-        };
-      };
-      const chat = collections.Chat.get(widFactory.createWid(request.chatId));
+      const chat = (
+        browser.require("WAWebCollections") as {
+          readonly Chat: {
+            readonly get: (wid: unknown) => Record<string, unknown> | undefined;
+          };
+        }
+      ).Chat.get(
+        (
+          browser.require("WAWebWidFactory") as {
+            readonly createWid: (id: string) => unknown;
+          }
+        ).createWid(request.chatId),
+      );
       const messages = chat?.msgs as
         | { readonly getModelsArray?: () => readonly Record<string, unknown>[] }
         | undefined;
       if (messages?.getModelsArray === undefined) return undefined;
-      const match = messages
-        .getModelsArray()
-        .find(
-          (message) =>
-            (message.id as { readonly fromMe?: unknown } | undefined)?.fromMe === true &&
-            String(message.body ?? "").trim() === request.expected,
-        );
+      const matches = messages.getModelsArray().filter((message) => {
+        if ((message.id as { readonly fromMe?: unknown } | undefined)?.fromMe !== true)
+          return false;
+        if (String(message.body ?? "").trim() !== request.expected) return false;
+        const timestamp = typeof message.t === "number" ? message.t : undefined;
+        return request.since === undefined || timestamp === undefined || timestamp >= request.since;
+      });
+      const match = matches[matches.length - 1];
       if (match === undefined) return undefined;
       return {
         body: String(match.body ?? ""),
         ack: typeof match.ack === "number" ? match.ack : undefined,
       };
     },
-    { chatId, expected: body.trim() },
+    { chatId, expected: body.trim(), since: sinceSeconds },
   );
 }

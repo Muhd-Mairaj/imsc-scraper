@@ -1,4 +1,3 @@
-/** Human label for a WhatsApp message acknowledgement value. */
 export function describeAck(ack: number): string {
   switch (ack) {
     case -1:
