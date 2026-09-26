@@ -518,23 +518,16 @@ export interface WhatsAppSentMessageConfirmation {
 
 /**
  * Finds our outgoing message in a chat's loaded messages without `getChatById`
- * (its model conversion is unstable on the pinned client). The report body is
- * identical every run, so only messages at or after `sinceSeconds` are
- * considered and the newest wins, lest a retry confirm itself against an old
- * copy.
+ * (its model conversion is unstable on the pinned client). Retries within the
+ * same week can share a body, so the newest match is the one that counts.
  */
 export async function findWhatsAppSentMessage(
   client: WhatsAppGroupBrowserClient,
   chatId: string,
   body: string,
-  sinceSeconds?: number,
 ): Promise<WhatsAppSentMessageConfirmation | undefined> {
   return await evaluator(client).evaluate(
-    async (request: {
-      readonly chatId: string;
-      readonly expected: string;
-      readonly since: number | undefined;
-    }) => {
+    async (request: { readonly chatId: string; readonly expected: string }) => {
       const browser = globalThis as unknown as {
         readonly require: (moduleName: string) => unknown;
       };
@@ -555,13 +548,13 @@ export async function findWhatsAppSentMessage(
         | { readonly getModelsArray?: () => readonly Record<string, unknown>[] }
         | undefined;
       if (messages?.getModelsArray === undefined) return undefined;
-      const matches = messages.getModelsArray().filter((message) => {
-        if ((message.id as { readonly fromMe?: unknown } | undefined)?.fromMe !== true)
-          return false;
-        if (String(message.body ?? "").trim() !== request.expected) return false;
-        const timestamp = typeof message.t === "number" ? message.t : undefined;
-        return request.since === undefined || timestamp === undefined || timestamp >= request.since;
-      });
+      const matches = messages
+        .getModelsArray()
+        .filter(
+          (message) =>
+            (message.id as { readonly fromMe?: unknown } | undefined)?.fromMe === true &&
+            String(message.body ?? "").trim() === request.expected,
+        );
       const match = matches[matches.length - 1];
       if (match === undefined) return undefined;
       return {
@@ -569,6 +562,6 @@ export async function findWhatsAppSentMessage(
         ack: typeof match.ack === "number" ? match.ack : undefined,
       };
     },
-    { chatId, expected: body.trim(), since: sinceSeconds },
+    { chatId, expected: body.trim() },
   );
 }
