@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { lstat, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
@@ -367,9 +367,11 @@ async function resolveChatId(
 
 /**
  * Confirms a send by looking for our outgoing message in the chat's loaded
- * messages. The pinned client returns `undefined` from `sendMessage` even on
- * success (WhatsApp Web renamed the message id field it reads), so the return
- * value alone cannot be trusted in either direction.
+ * messages and waiting until it has actually left the device. The pinned client
+ * returns `undefined` from `sendMessage` even on success (WhatsApp Web renamed
+ * the message id field it reads), so the return value alone cannot be trusted
+ * in either direction. A message that stays at `ack=0` was only queued locally
+ * and must not count as sent.
  */
 async function confirmSentMessage(
   client: WAWebJS.Client,
@@ -379,12 +381,16 @@ async function confirmSentMessage(
 ): Promise<WhatsAppSentMessageConfirmation | undefined> {
   const browserClient = { pupPage: client.pupPage } as WhatsAppGroupBrowserClient;
   const deadline = Date.now() + timeoutMs;
+  let seen: WhatsAppSentMessageConfirmation | undefined;
   while (true) {
-    const confirmed = await findWhatsAppSentMessage(browserClient, chatId, content).catch(
+    const found = await findWhatsAppSentMessage(browserClient, chatId, content).catch(
       () => undefined,
     );
-    if (confirmed !== undefined) return confirmed;
-    if (Date.now() >= deadline) return undefined;
+    if (found !== undefined) {
+      seen = found;
+      if (found.ack !== undefined && found.ack >= 1) return found;
+    }
+    if (Date.now() >= deadline) return seen;
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
 }
@@ -401,6 +407,11 @@ async function sendWhatsAppMessage(
       `WhatsApp accepted message ${message.id._serialized} for ${chatId} (ack=${message.ack}: ${describeAck(message.ack)}).`,
     );
     const ack = await waitForAcknowledgement(message, logger);
+    if (ack < 1) {
+      throw new Error(
+        `WhatsApp left message ${message.id._serialized} to ${chatId} pending (ack=${ack}: ${describeAck(ack)}); it was not sent.`,
+      );
+    }
     logger.info(`Message ${message.id._serialized} settled at ack=${ack} (${describeAck(ack)}).`);
     return;
   }
@@ -409,17 +420,47 @@ async function sendWhatsAppMessage(
   logger.warn(
     `The send call for ${chatId} returned no message; checking the chat for the message...`,
   );
-  const confirmed = await confirmSentMessage(client, chatId, content, 10_000);
+  const confirmed = await confirmSentMessage(client, chatId, content, 20_000);
   if (confirmed === undefined) {
     throw new Error(
       `WhatsApp did not send the message to ${chatId}: the chat could not be resolved and no outgoing message appeared.`,
     );
   }
-  const suffix =
-    confirmed.ack === undefined ? "" : ` (ack=${confirmed.ack}: ${describeAck(confirmed.ack)})`;
+  if (confirmed.ack === undefined || confirmed.ack < 1) {
+    const label =
+      confirmed.ack === undefined ? "unknown" : `${confirmed.ack}: ${describeAck(confirmed.ack)}`;
+    throw new Error(
+      `WhatsApp left the message to ${chatId} pending (ack=${label}); it was not sent.`,
+    );
+  }
   logger.info(
-    `WhatsApp delivered the message for ${chatId}${suffix} (the send call returned no message).`,
+    `WhatsApp delivered the message for ${chatId} (ack=${confirmed.ack}: ${describeAck(confirmed.ack)}) (the send call returned no message).`,
   );
+}
+
+/**
+ * Removes the Chromium profile locks left behind when a run is killed. Without
+ * this the next run aborts with "The profile appears to be in use by another
+ * Chromium process": the lock records a hostname and pid that no longer
+ * identify a live process in the fresh container.
+ */
+async function clearStaleChromiumLocks(logger: Logger): Promise<void> {
+  const profileDirectory = join(authDirectory, "session-imsc-scraper");
+  const lockNames = ["SingletonCookie", "SingletonLock", "SingletonSocket", "DevToolsActivePort"];
+  let removed = 0;
+  for (const name of lockNames) {
+    const lockPath = join(profileDirectory, name);
+    try {
+      await lstat(lockPath);
+    } catch {
+      continue;
+    }
+    await rm(lockPath, { force: true, recursive: true });
+    removed += 1;
+  }
+  if (removed > 0) {
+    logger.info(`Cleared ${removed} stale Chromium profile lock(s) before starting.`);
+  }
 }
 
 function puppeteerOptions() {
@@ -442,6 +483,7 @@ async function main(): Promise<void> {
   logger.info(
     `Runtime: bun=${versions.bun ?? "?"} node=${versions.node ?? "?"} pid=${process.pid} cwd=${process.cwd()} timeZone=${Intl.DateTimeFormat().resolvedOptions().timeZone}.`,
   );
+  await clearStaleChromiumLocks(logger);
 
   const client = new Client({
     authStrategy: new LocalAuth({
