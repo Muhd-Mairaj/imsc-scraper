@@ -4,15 +4,11 @@ export const AUTO_MESSAGE_MARKER = "[AUTO MESSAGE]";
 export const BOT_SIGNATURE = "_~ Mairaj's Bot_";
 export const EMPTY_WEEK_NOTICE = "No engagement recorded this week.";
 
-/** Envelope shared by every message this script sends. */
 function envelope(heading: string, window: WeeklyWindow, body: string): string {
   return `${AUTO_MESSAGE_MARKER}\n*${heading}*\n${formatWindowRange(window)}\n\n${body}\n\n${BOT_SIGNATURE}\n`;
 }
 
-/**
- * The weekly report. A blank `body` renders the empty-week notice instead, so
- * both cases come from one place.
- */
+/** A blank body renders the empty-week notice. */
 export function renderWeeklyReport(window: WeeklyWindow, body: string): string {
   const trimmed = body.trim();
   return envelope(

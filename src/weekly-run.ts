@@ -6,6 +6,7 @@ import {
   type WeeklyWindow,
 } from "./schedule.js";
 import { shouldSendAlert, shouldSendReport, type WeeklyState } from "./state.js";
+import { errorMessage } from "./utils.js";
 import { renderFailureAlert, renderWeeklyReport } from "./weekly.js";
 
 export interface WeeklyEngagement {
@@ -33,14 +34,7 @@ export interface WeeklyOutcome {
   readonly emptyWeek: boolean;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-/**
- * Best-effort operator alert. Never throws: if WhatsApp cannot send to the
- * operator's own number, that is logged and the original failure propagates.
- */
+/** Best effort: a failed alert is logged, and the original error still propagates. */
 async function alertBestEffort(
   dependencies: WeeklyRunDependencies,
   window: WeeklyWindow,

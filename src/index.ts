@@ -5,7 +5,7 @@ import { createInterface } from "node:readline/promises";
 import select from "@inquirer/select";
 import qrcode from "qrcode-terminal";
 import WAWebJS from "whatsapp-web.js";
-import { parseCommand } from "./commands.js";
+import { parseCommand, USAGE } from "./commands.js";
 import {
   type AppConfig,
   authDirectory,
@@ -17,8 +17,13 @@ import {
   saveConfig,
 } from "./config.js";
 import { createLogger, type Logger, pruneLogFiles } from "./logger.js";
-import { type MonthlyActivityItem, renderMonthlyActivitySummary } from "./report.js";
+import {
+  formatActivityDate,
+  type MonthlyActivityItem,
+  renderMonthlyActivitySummary,
+} from "./report.js";
 import { loadWeeklyState, saveWeeklyState } from "./state.js";
+import { describeAck, errorMessage, phoneDigits } from "./utils.js";
 import { runWeeklyReport } from "./weekly-run.js";
 import {
   discoverWhatsAppWeeklyMarkers,
@@ -31,7 +36,6 @@ import {
   type WhatsAppParticipant,
   type WhatsAppSentMessageConfirmation,
 } from "./whatsapp.js";
-import { describeAck } from "./whatsapp-send.js";
 
 const { Client, LocalAuth } = WAWebJS;
 
@@ -103,10 +107,6 @@ async function runSetup(client: WAWebJS.Client, logger: Logger): Promise<void> {
     `Saved configuration: group "${selectedChat.name}" (${selectedChat.id}), ${ignoredPhoneNumbers.length} ignored number(s), weekly recipient ${weeklyReportRecipient ?? "unset"}.`,
   );
   console.log(`Saved “${selectedChat.name}” to ${configFilePath}`);
-}
-
-function phoneDigits(value: string): string {
-  return value.replaceAll(/\D/gu, "");
 }
 
 async function runWeekly(
@@ -186,11 +186,6 @@ function currentMonthStartMs(now: Date): number {
   return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
 }
 
-function formatLocalDate(timestampMs: number): string {
-  const date = new Date(timestampMs);
-  return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
-}
-
 interface EngagementCollection {
   readonly items: readonly MonthlyActivityItem[];
   readonly warnings: readonly string[];
@@ -209,58 +204,35 @@ async function collectEngagement(
   const items: MonthlyActivityItem[] = [];
   const warnings: string[] = [];
   for (const marker of markers) {
-    const itemDate = formatLocalDate(marker.followingTimestampMs);
+    const itemDate = formatActivityDate(marker.followingTimestampMs);
     if (marker.followingMessageId === undefined) {
       warnings.push(`${itemDate}: engagement is unavailable.`);
       continue;
     }
-    if (marker.followingType === "poll_creation") {
-      const pollParticipants = await probeWhatsAppPollParticipants(
-        browserClient,
-        marker.followingMessageId,
-      );
-      if (pollParticipants === undefined) {
-        warnings.push(`${itemDate}: poll vote records are unavailable.`);
-        continue;
-      }
-      const eligible = eligibleParticipants(
-        pollParticipants.participants,
-        config.ignoredPhoneNumbers,
-      );
-      items.push({
-        timestampMs: marker.followingTimestampMs,
-        activity: 2,
-        participantDisplays: eligible.participants.map((participant) => participant.display),
-      });
-      if (pollParticipants.unresolvedParticipantCount > 0) {
-        warnings.push(
-          `${itemDate}: ${pollParticipants.unresolvedParticipantCount} poll participant identities are unavailable.`,
+    const isPoll = marker.followingType === "poll_creation";
+    const probe = isPoll
+      ? await probeWhatsAppPollParticipants(browserClient, marker.followingMessageId)
+      : await probeWhatsAppReactionParticipants(
+          browserClient,
+          marker.followingMessageId,
+          marker.followingHasReaction,
         );
-      }
-    } else {
-      const reactionParticipants = await probeWhatsAppReactionParticipants(
-        browserClient,
-        marker.followingMessageId,
-        marker.followingHasReaction,
+    if (probe === undefined) {
+      warnings.push(
+        `${itemDate}: ${isPoll ? "poll vote" : "reaction sender"} records are unavailable.`,
       );
-      if (reactionParticipants === undefined) {
-        warnings.push(`${itemDate}: reaction sender records are unavailable.`);
-        continue;
-      }
-      const eligible = eligibleParticipants(
-        reactionParticipants.participants,
-        config.ignoredPhoneNumbers,
+      continue;
+    }
+    const eligible = eligibleParticipants(probe.participants, config.ignoredPhoneNumbers);
+    items.push({
+      timestampMs: marker.followingTimestampMs,
+      activity: isPoll ? 2 : 1,
+      participantDisplays: eligible.participants.map((participant) => participant.display),
+    });
+    if (probe.unresolvedParticipantCount > 0) {
+      warnings.push(
+        `${itemDate}: ${probe.unresolvedParticipantCount} ${isPoll ? "poll" : "reaction"} participant identities are unavailable.`,
       );
-      items.push({
-        timestampMs: marker.followingTimestampMs,
-        activity: 1,
-        participantDisplays: eligible.participants.map((participant) => participant.display),
-      });
-      if (reactionParticipants.unresolvedParticipantCount > 0) {
-        warnings.push(
-          `${itemDate}: ${reactionParticipants.unresolvedParticipantCount} reaction participant identities are unavailable.`,
-        );
-      }
     }
     if (marker.recoveredAfterRevoked) {
       warnings.push(`${itemDate}: uses a same-day replacement after a revoked item.`);
@@ -308,9 +280,8 @@ async function verifySelectedChat(client: WAWebJS.Client, logger: Logger): Promi
 }
 
 /**
- * Waits briefly for the message to reach the recipient, so a message that
- * WhatsApp accepted but could not deliver is visible in the logs rather than
- * looking like a success. `Message.reload()` refreshes `ack` in place.
+ * `Message.reload()` refreshes `ack` in place, so a send that WhatsApp accepted
+ * but never delivered is visible in the logs instead of looking like a success.
  */
 async function waitForAcknowledgement(
   message: WAWebJS.Message,
@@ -335,15 +306,10 @@ async function waitForAcknowledgement(
   return message.ack;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 /**
- * Resolves a phone number to the id WhatsApp Web actually uses. WhatsApp has
- * migrated contacts to LID identifiers, and sending straight to `digits@c.us`
- * fails for any chat the linked device has not opened yet. `getNumberId` asks
- * WhatsApp for the current id and registers the contact as a side effect.
+ * WhatsApp now addresses many contacts by LID, and sending to `digits@c.us`
+ * fails until that chat exists; `getNumberId` returns (and registers) the id
+ * WhatsApp actually uses.
  */
 async function resolveChatId(
   client: WAWebJS.Client,
@@ -366,12 +332,9 @@ async function resolveChatId(
 }
 
 /**
- * Confirms a send by looking for our outgoing message in the chat's loaded
- * messages and waiting until it has actually left the device. The pinned client
- * returns `undefined` from `sendMessage` even on success (WhatsApp Web renamed
- * the message id field it reads), so the return value alone cannot be trusted
- * in either direction. A message that stays at `ack=0` was only queued locally
- * and must not count as sent.
+ * The pinned client returns `undefined` from `sendMessage` even on success, so
+ * a send is confirmed by waiting for the chat's stored copy to reach `ack >= 1`.
+ * `ack=0` means the message was only queued locally and never left.
  */
 async function confirmSentMessage(
   client: WAWebJS.Client,
@@ -450,10 +413,9 @@ async function sendWhatsAppMessage(
 }
 
 /**
- * Removes the Chromium profile locks left behind when a run is killed. Without
- * this the next run aborts with "The profile appears to be in use by another
- * Chromium process": the lock records a hostname and pid that no longer
- * identify a live process in the fresh container.
+ * A killed run leaves Chromium profile locks whose recorded pid no longer
+ * exists; without clearing them the next run aborts with "profile appears to be
+ * in use by another Chromium process".
  */
 async function clearStaleChromiumLocks(logger: Logger): Promise<void> {
   const profileDirectory = join(authDirectory, "session-imsc-scraper");
@@ -487,6 +449,10 @@ function puppeteerOptions() {
 
 async function main(): Promise<void> {
   const { command, force, dryRun } = parseCommand(process.argv.slice(2));
+  if (command === "help") {
+    stdout.write(USAGE);
+    return;
+  }
   const logger = createLogger({ scope: command });
   pruneLogFiles();
   logger.info(`Starting "${command}" with args ${JSON.stringify(process.argv.slice(2))}.`);
@@ -501,10 +467,8 @@ async function main(): Promise<void> {
       clientId: "imsc-scraper",
       dataPath: authDirectory,
     }),
-    // Keep the web-version cache inside the writable data directory. The
-    // default path is `./.wwebjs_cache` relative to the process cwd, which is
-    // root-owned in the container; the resulting mkdir EACCES prevents the
-    // client from ever reaching the `ready` event.
+    // The default cache path sits under the process cwd, which is not writable
+    // inside the container.
     webVersionCache: { type: "local", path: join(dataDirectory, ".wwebjs_cache") },
     puppeteer: puppeteerOptions(),
   });

@@ -8,10 +8,6 @@ const LOG_FILE_PREFIX = "imsc-";
 const LOG_FILE_SUFFIX = ".log";
 const RETAINED_LOG_FILES = 30;
 
-/**
- * UTC day stamp. UTC keeps a file to one unambiguous 24h span and sorts
- * cleanly; each line still carries a full ISO timestamp.
- */
 function logDayStamp(now: Date): string {
   return now.toISOString().slice(0, 10);
 }
@@ -51,12 +47,7 @@ export function pruneLogFiles(directory: string = logsDirectory, keep = RETAINED
   }
 }
 
-/**
- * Appends timestamped, levelled lines to a daily file under `data/logs` and
- * mirrors them to the console. Writes are synchronous so the final lines are on
- * disk even when the process exits immediately after, and are best-effort so a
- * logging failure can never take down a run.
- */
+/** Synchronous so the last lines survive an immediate exit; failures never break a run. */
 export function createLogger(options: LoggerOptions): Logger {
   const directory = options.directory ?? logsDirectory;
   const now = options.now ?? (() => new Date());

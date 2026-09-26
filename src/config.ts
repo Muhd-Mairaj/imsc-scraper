@@ -1,5 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { z } from "zod";
+import { phoneDigits } from "./utils.js";
 
 export interface SelectedChatConfig {
   id: string;
@@ -17,15 +19,22 @@ export const dataDirectory = resolve(process.cwd(), "data");
 export const authDirectory = join(dataDirectory, "auth");
 export const configFilePath = join(dataDirectory, "config.json");
 
+const configSchema = z.object({
+  selectedChat: z.object({
+    id: z.string().trim().min(1),
+    name: z.string().trim().min(1),
+  }),
+  ignoredPhoneNumbers: z.array(z.string()).default([]),
+  weeklyReportRecipient: z.string().optional(),
+});
+
 export function normalizePhoneNumbers(values: readonly string[]): readonly string[] {
-  return [...new Set(values.map((value) => value.replaceAll(/\D/gu, "")).filter(Boolean))];
+  return [...new Set(values.map((value) => phoneDigits(value)).filter(Boolean))];
 }
 
 export async function saveConfig(config: AppConfig): Promise<void> {
   await mkdir(dirname(configFilePath), { recursive: true, mode: 0o700 });
-
-  const temporaryPath = `${configFilePath}.${process.pid}.tmp`;
-  const serializedConfig = `${JSON.stringify(
+  const serialized = `${JSON.stringify(
     {
       selectedChat: config.selectedChat,
       ignoredPhoneNumbers: normalizePhoneNumbers(config.ignoredPhoneNumbers),
@@ -36,8 +45,8 @@ export async function saveConfig(config: AppConfig): Promise<void> {
     null,
     2,
   )}\n`;
-
-  await writeFile(temporaryPath, serializedConfig, { encoding: "utf8", mode: 0o600 });
+  const temporaryPath = `${configFilePath}.${process.pid}.tmp`;
+  await writeFile(temporaryPath, serialized, { encoding: "utf8", mode: 0o600 });
   await rename(temporaryPath, configFilePath);
 }
 
@@ -64,39 +73,13 @@ export async function loadConfig(): Promise<AppConfig> {
   } catch {
     throw invalidConfig();
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw invalidConfig();
-  }
-  const fields = parsed as Readonly<Record<string, unknown>>;
-  const selectedChat = fields.selectedChat;
-  if (typeof selectedChat !== "object" || selectedChat === null || Array.isArray(selectedChat)) {
-    throw invalidConfig();
-  }
-  const selectedChatFields = selectedChat as Readonly<Record<string, unknown>>;
-  if (
-    typeof selectedChatFields.id !== "string" ||
-    selectedChatFields.id.trim().length === 0 ||
-    typeof selectedChatFields.name !== "string" ||
-    selectedChatFields.name.trim().length === 0
-  ) {
-    throw invalidConfig();
-  }
-  if (
-    fields.ignoredPhoneNumbers !== undefined &&
-    (!Array.isArray(fields.ignoredPhoneNumbers) ||
-      fields.ignoredPhoneNumbers.some((phoneNumber) => typeof phoneNumber !== "string"))
-  ) {
-    throw invalidConfig();
-  }
-  const recipient = fields.weeklyReportRecipient;
-  if (recipient !== undefined && typeof recipient !== "string") {
-    throw invalidConfig();
-  }
+  const result = configSchema.safeParse(parsed);
+  if (!result.success) throw invalidConfig();
+
+  const recipient = result.data.weeklyReportRecipient;
   return {
-    selectedChat: { id: selectedChatFields.id.trim(), name: selectedChatFields.name.trim() },
-    ignoredPhoneNumbers: normalizePhoneNumbers(
-      (fields.ignoredPhoneNumbers as readonly string[] | undefined) ?? [],
-    ),
+    selectedChat: result.data.selectedChat,
+    ignoredPhoneNumbers: normalizePhoneNumbers(result.data.ignoredPhoneNumbers),
     weeklyReportRecipient:
       recipient === undefined ? undefined : (normalizePhoneNumbers([recipient])[0] ?? undefined),
   };

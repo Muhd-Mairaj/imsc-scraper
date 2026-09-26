@@ -1,4 +1,6 @@
-export type Command = "setup" | "verify" | "weekly";
+import { parseArgs } from "node:util";
+
+export type Command = "setup" | "verify" | "weekly" | "help";
 
 export interface CommandArguments {
   readonly command: Command;
@@ -6,24 +8,37 @@ export interface CommandArguments {
   readonly dryRun: boolean;
 }
 
-const FORCE_FLAG = "--force";
-const DRY_RUN_FLAG = "--dry-run";
+export const USAGE = `Usage: imsc <command> [options]
 
-/**
- * `--force` and `--dry-run` only affect the weekly run, so using them anywhere
- * else is a mistake worth failing on rather than silently accepting.
- */
+Commands:
+  verify      Write the current month's engagement summary (default)
+  setup       Link WhatsApp, choose the group, and set the weekly recipient
+  weekly      Send the weekly engagement report
+
+Options:
+  --force     weekly: send even if this window was already recorded
+  --dry-run   weekly: print the report without sending or saving state
+  -h, --help  Show this help
+`;
+
 export function parseCommand(arguments_: readonly string[]): CommandArguments {
-  const force = arguments_.includes(FORCE_FLAG);
-  const dryRun = arguments_.includes(DRY_RUN_FLAG);
-  const [first] = arguments_.filter(
-    (argument) => argument !== FORCE_FLAG && argument !== DRY_RUN_FLAG,
-  );
-  const command: Command = first === "setup" ? "setup" : first === "weekly" ? "weekly" : "verify";
-  for (const flag of [FORCE_FLAG, DRY_RUN_FLAG]) {
-    if (arguments_.includes(flag) && command !== "weekly") {
-      throw new Error(`${flag} is only supported by the weekly command.`);
-    }
+  const { values, positionals } = parseArgs({
+    args: [...arguments_],
+    options: {
+      force: { type: "boolean" },
+      "dry-run": { type: "boolean" },
+      help: { type: "boolean", short: "h" },
+    },
+    allowPositionals: true,
+    strict: false,
+  });
+  if (values.help === true) return { command: "help", force: false, dryRun: false };
+  const [first] = positionals;
+  const command: Command = first === "setup" || first === "weekly" ? first : "verify";
+  const force = values.force === true;
+  const dryRun = values["dry-run"] === true;
+  if (command !== "weekly" && (force || dryRun)) {
+    throw new Error(`${force ? "--force" : "--dry-run"} is only supported by the weekly command.`);
   }
   return { command, force, dryRun };
 }
