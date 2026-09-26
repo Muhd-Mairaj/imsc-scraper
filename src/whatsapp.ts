@@ -517,17 +517,67 @@ export interface WhatsAppSentMessageConfirmation {
 }
 
 /**
- * Finds our outgoing message in a chat's loaded messages without `getChatById`
- * (its model conversion is unstable on the pinned client). Retries within the
- * same week can share a body, so the newest match is the one that counts.
+ * Ids of the messages already in a chat. Taken before a send so the message
+ * that send creates can be told apart from older copies with the same body.
+ */
+export async function snapshotWhatsAppMessageIds(
+  client: WhatsAppGroupBrowserClient,
+  chatId: string,
+): Promise<readonly string[]> {
+  return await evaluator(client).evaluate(async (requestedChatId) => {
+    const browser = globalThis as unknown as {
+      readonly require: (moduleName: string) => unknown;
+    };
+    const chat = (
+      browser.require("WAWebCollections") as {
+        readonly Chat: {
+          readonly get: (wid: unknown) => Record<string, unknown> | undefined;
+        };
+      }
+    ).Chat.get(
+      (
+        browser.require("WAWebWidFactory") as {
+          readonly createWid: (id: string) => unknown;
+        }
+      ).createWid(requestedChatId),
+    );
+    const messages = chat?.msgs as
+      | { readonly getModelsArray?: () => readonly Record<string, unknown>[] }
+      | undefined;
+    if (messages?.getModelsArray === undefined) return [];
+    return messages.getModelsArray().flatMap((message) => {
+      const id = message.id as
+        | { readonly _serialized?: unknown; readonly toString?: () => string }
+        | undefined;
+      const serialized =
+        typeof id?._serialized === "string"
+          ? id._serialized
+          : typeof id?.toString === "function"
+            ? id.toString()
+            : undefined;
+      return serialized === undefined ? [] : [serialized];
+    });
+  }, chatId);
+}
+
+/**
+ * Finds the message a send created, by looking for a matching outgoing message
+ * whose id was not present before the send. `getChatById` is avoided (its model
+ * conversion is unstable on the pinned client), and retries share the same
+ * body, so an id that is new is the only reliable signal.
  */
 export async function findWhatsAppSentMessage(
   client: WhatsAppGroupBrowserClient,
   chatId: string,
   body: string,
+  knownIds: readonly string[],
 ): Promise<WhatsAppSentMessageConfirmation | undefined> {
   return await evaluator(client).evaluate(
-    async (request: { readonly chatId: string; readonly expected: string }) => {
+    async (request: {
+      readonly chatId: string;
+      readonly expected: string;
+      readonly known: readonly string[];
+    }) => {
       const browser = globalThis as unknown as {
         readonly require: (moduleName: string) => unknown;
       };
@@ -548,13 +598,24 @@ export async function findWhatsAppSentMessage(
         | { readonly getModelsArray?: () => readonly Record<string, unknown>[] }
         | undefined;
       if (messages?.getModelsArray === undefined) return undefined;
-      const matches = messages
-        .getModelsArray()
-        .filter(
-          (message) =>
-            (message.id as { readonly fromMe?: unknown } | undefined)?.fromMe === true &&
-            String(message.body ?? "").trim() === request.expected,
-        );
+      const serializedId = (message: Record<string, unknown>): string | undefined => {
+        const id = message.id as
+          | { readonly _serialized?: unknown; readonly toString?: () => string }
+          | undefined;
+        return typeof id?._serialized === "string"
+          ? id._serialized
+          : typeof id?.toString === "function"
+            ? id.toString()
+            : undefined;
+      };
+      const known = new Set(request.known);
+      const matches = messages.getModelsArray().filter((message) => {
+        if ((message.id as { readonly fromMe?: unknown } | undefined)?.fromMe !== true)
+          return false;
+        if (String(message.body ?? "").trim() !== request.expected) return false;
+        const id = serializedId(message);
+        return id !== undefined && !known.has(id);
+      });
       const match = matches[matches.length - 1];
       if (match === undefined) return undefined;
       return {
@@ -562,6 +623,6 @@ export async function findWhatsAppSentMessage(
         ack: typeof match.ack === "number" ? match.ack : undefined,
       };
     },
-    { chatId, expected: body.trim() },
+    { chatId, expected: body.trim(), known: knownIds },
   );
 }
