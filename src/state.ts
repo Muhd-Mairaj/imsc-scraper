@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { z } from "zod";
 import { dataDirectory } from "./config.js";
 
 export interface WeeklyState {
@@ -9,14 +10,15 @@ export interface WeeklyState {
 
 export const weeklyStateFilePath = join(dataDirectory, "weekly-state.json");
 
+const stateSchema = z.object({
+  lastReportWindowEnd: z.number().optional(),
+  lastAlertWindowEnd: z.number().optional(),
+});
+
 const EMPTY_STATE: WeeklyState = Object.freeze({
   lastReportWindowEnd: undefined,
   lastAlertWindowEnd: undefined,
 });
-
-function windowEnd(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
 
 /** Missing or malformed state is empty state, never an error — worst case we resend once. */
 export async function loadWeeklyState(): Promise<WeeklyState> {
@@ -32,13 +34,11 @@ export async function loadWeeklyState(): Promise<WeeklyState> {
   } catch {
     return EMPTY_STATE;
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return EMPTY_STATE;
-  }
-  const fields = parsed as Readonly<Record<string, unknown>>;
+  const result = stateSchema.safeParse(parsed);
+  if (!result.success) return EMPTY_STATE;
   return {
-    lastReportWindowEnd: windowEnd(fields.lastReportWindowEnd),
-    lastAlertWindowEnd: windowEnd(fields.lastAlertWindowEnd),
+    lastReportWindowEnd: result.data.lastReportWindowEnd,
+    lastAlertWindowEnd: result.data.lastAlertWindowEnd,
   };
 }
 
