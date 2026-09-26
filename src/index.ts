@@ -379,13 +379,14 @@ async function confirmSentMessage(
   content: string,
   timeoutMs: number,
   logger: Logger,
+  sinceSeconds: number,
 ): Promise<WhatsAppSentMessageConfirmation | undefined> {
   const browserClient = { pupPage: client.pupPage } as WhatsAppGroupBrowserClient;
   const deadline = Date.now() + timeoutMs;
   let seen: WhatsAppSentMessageConfirmation | undefined;
   let reportedPending = false;
   while (true) {
-    const found = await findWhatsAppSentMessage(browserClient, chatId, content).catch(
+    const found = await findWhatsAppSentMessage(browserClient, chatId, content, sinceSeconds).catch(
       () => undefined,
     );
     if (found !== undefined) {
@@ -412,6 +413,9 @@ async function sendWhatsAppMessage(
   content: string,
   logger: Logger,
 ): Promise<void> {
+  // The report body repeats every week; only messages created from here on may
+  // confirm this send.
+  const sinceSeconds = Math.floor(Date.now() / 1_000) - 5;
   const message = await client.sendMessage(chatId, content);
   if (message !== undefined) {
     logger.info(
@@ -431,7 +435,7 @@ async function sendWhatsAppMessage(
   logger.warn(
     `The send call for ${chatId} returned no message; checking the chat for the message...`,
   );
-  const confirmed = await confirmSentMessage(client, chatId, content, 60_000, logger);
+  const confirmed = await confirmSentMessage(client, chatId, content, 60_000, logger, sinceSeconds);
   if (confirmed === undefined) {
     throw new Error(
       `WhatsApp did not send the message to ${chatId}: the chat could not be resolved and no outgoing message appeared.`,

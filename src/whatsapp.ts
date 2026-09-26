@@ -600,11 +600,16 @@ export interface WhatsAppSentMessageConfirmation {
  * going through `getChatById` (whose model conversion is unstable on the pinned
  * client). This is how a send is confirmed: `client.sendMessage` can report
  * nothing even when the message was delivered.
+ *
+ * The report body is identical on every run, so older copies of it are usually
+ * present. Only messages at or after `sinceSeconds` are considered, and the
+ * newest match wins, so a retry cannot confirm itself against a stale message.
  */
 export async function findWhatsAppSentMessage(
   client: WhatsAppGroupBrowserClient,
   chatId: string,
   body: string,
+  sinceSeconds?: number,
 ): Promise<WhatsAppSentMessageConfirmation | undefined> {
   const page = client.pupPage as unknown as {
     readonly evaluate: <T, A>(
@@ -613,7 +618,11 @@ export async function findWhatsAppSentMessage(
     ) => Promise<T>;
   };
   return await page.evaluate(
-    async (request: { readonly chatId: string; readonly expected: string }) => {
+    async (request: {
+      readonly chatId: string;
+      readonly expected: string;
+      readonly since: number | undefined;
+    }) => {
       const browser = globalThis as unknown as {
         readonly require: (moduleName: string) => unknown;
       };
@@ -630,19 +639,20 @@ export async function findWhatsAppSentMessage(
         | { readonly getModelsArray?: () => readonly Record<string, unknown>[] }
         | undefined;
       if (messages?.getModelsArray === undefined) return undefined;
-      const match = messages
-        .getModelsArray()
-        .find(
-          (message) =>
-            (message.id as { readonly fromMe?: unknown } | undefined)?.fromMe === true &&
-            String(message.body ?? "").trim() === request.expected,
-        );
+      const matches = messages.getModelsArray().filter((message) => {
+        if ((message.id as { readonly fromMe?: unknown } | undefined)?.fromMe !== true)
+          return false;
+        if (String(message.body ?? "").trim() !== request.expected) return false;
+        const timestamp = typeof message.t === "number" ? message.t : undefined;
+        return request.since === undefined || timestamp === undefined || timestamp >= request.since;
+      });
+      const match = matches[matches.length - 1];
       if (match === undefined) return undefined;
       return {
         body: String(match.body ?? ""),
         ack: typeof match.ack === "number" ? match.ack : undefined,
       };
     },
-    { chatId, expected: body.trim() },
+    { chatId, expected: body.trim(), since: sinceSeconds },
   );
 }
