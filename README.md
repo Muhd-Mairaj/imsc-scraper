@@ -147,7 +147,13 @@ Chromium runs with `--no-sandbox` because the container has no usable sandbox an
 
 ### Weekly report on a timer
 
-The weekly report is intended to run from a systemd timer at 06:00 every Saturday `Asia/Kuala_Lumpur`. Adjust `WorkingDirectory` and the `docker` path in `deploy/imsc-weekly.service` for the server, then install both units:
+The weekly report runs from a systemd timer at 06:00 every Saturday `Asia/Kuala_Lumpur`. Install the units with the helper, which points the service at this checkout and the `docker` binary on the host:
+
+```sh
+./deploy/install.sh
+```
+
+It rewrites `WorkingDirectory` and `ExecStart`, installs both units under `/etc/systemd/system`, then reloads and enables the timer. Run it again after moving the checkout. To install by hand instead, edit `deploy/imsc-weekly.service` first, then:
 
 ```sh
 sudo cp deploy/imsc-weekly.service deploy/imsc-weekly.timer /etc/systemd/system/
