@@ -5,7 +5,7 @@ import { createInterface } from "node:readline/promises";
 import select from "@inquirer/select";
 import qrcode from "qrcode-terminal";
 import WAWebJS from "whatsapp-web.js";
-import { parseCommand } from "./commands.js";
+import { parseCommand, USAGE } from "./commands.js";
 import {
   type AppConfig,
   authDirectory,
@@ -449,6 +449,10 @@ function puppeteerOptions() {
 
 async function main(): Promise<void> {
   const { command, force, dryRun } = parseCommand(process.argv.slice(2));
+  if (command === "help") {
+    stdout.write(USAGE);
+    return;
+  }
   const logger = createLogger({ scope: command });
   pruneLogFiles();
   logger.info(`Starting "${command}" with args ${JSON.stringify(process.argv.slice(2))}.`);

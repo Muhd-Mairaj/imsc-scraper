@@ -43,3 +43,21 @@ test("the flags are rejected for commands that do not send", () => {
   expect(() => parseCommand(["setup", "--dry-run"])).toThrow("--dry-run");
   expect(() => parseCommand(["--dry-run"])).toThrow("--dry-run");
 });
+
+test("--help and -h request usage", () => {
+  expect(parseCommand(["--help"])).toEqual({ command: "help", force: false, dryRun: false });
+  expect(parseCommand(["-h"])).toEqual({ command: "help", force: false, dryRun: false });
+  expect(parseCommand(["weekly", "--help"])).toEqual({
+    command: "help",
+    force: false,
+    dryRun: false,
+  });
+});
+
+test("help wins over an otherwise invalid flag", () => {
+  expect(parseCommand(["setup", "--force", "--help"])).toEqual({
+    command: "help",
+    force: false,
+    dryRun: false,
+  });
+});

@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
 
-export type Command = "setup" | "verify" | "weekly";
+export type Command = "setup" | "verify" | "weekly" | "help";
 
 export interface CommandArguments {
   readonly command: Command;
@@ -8,14 +8,31 @@ export interface CommandArguments {
   readonly dryRun: boolean;
 }
 
-/** `--force` and `--dry-run` only apply to `weekly`; using them elsewhere is an error. */
+export const USAGE = `Usage: imsc <command> [options]
+
+Commands:
+  verify      Write the current month's engagement summary (default)
+  setup       Link WhatsApp, choose the group, and set the weekly recipient
+  weekly      Send the weekly engagement report
+
+Options:
+  --force     weekly: send even if this window was already recorded
+  --dry-run   weekly: print the report without sending or saving state
+  -h, --help  Show this help
+`;
+
 export function parseCommand(arguments_: readonly string[]): CommandArguments {
   const { values, positionals } = parseArgs({
     args: [...arguments_],
-    options: { force: { type: "boolean" }, "dry-run": { type: "boolean" } },
+    options: {
+      force: { type: "boolean" },
+      "dry-run": { type: "boolean" },
+      help: { type: "boolean", short: "h" },
+    },
     allowPositionals: true,
     strict: false,
   });
+  if (values.help === true) return { command: "help", force: false, dryRun: false };
   const [first] = positionals;
   const command: Command = first === "setup" || first === "weekly" ? first : "verify";
   const force = values.force === true;

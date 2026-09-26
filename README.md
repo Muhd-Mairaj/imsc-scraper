@@ -2,6 +2,18 @@
 
 A small TypeScript CLI that creates a read-only monthly WhatsApp activity summary for a Community announcements group through [whatsapp-web.js](https://wwebjs.dev/).
 
+## Commands
+
+```sh
+bun run dev --help
+```
+
+- `verify` (default) — write the current month's engagement summary.
+- `setup` — link WhatsApp, choose the group, and set the weekly recipient.
+- `weekly` — send the weekly engagement report (`--force`, `--dry-run`).
+
+`--help` (or `-h`) prints this list without starting WhatsApp. In Docker: `docker compose run --rm imsc --help`.
+
 ## Prerequisites
 
 - [Bun](https://bun.com/) 1.3 or newer
