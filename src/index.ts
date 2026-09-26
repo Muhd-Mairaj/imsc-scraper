@@ -315,7 +315,7 @@ async function verifySelectedChat(client: WAWebJS.Client, logger: Logger): Promi
 async function waitForAcknowledgement(
   message: WAWebJS.Message,
   logger: Logger,
-  timeoutMs = 15_000,
+  timeoutMs = 60_000,
 ): Promise<number> {
   const deadline = Date.now() + timeoutMs;
   while (message.ack < 2 && Date.now() < deadline) {
@@ -378,10 +378,12 @@ async function confirmSentMessage(
   chatId: string,
   content: string,
   timeoutMs: number,
+  logger: Logger,
 ): Promise<WhatsAppSentMessageConfirmation | undefined> {
   const browserClient = { pupPage: client.pupPage } as WhatsAppGroupBrowserClient;
   const deadline = Date.now() + timeoutMs;
   let seen: WhatsAppSentMessageConfirmation | undefined;
+  let reportedPending = false;
   while (true) {
     const found = await findWhatsAppSentMessage(browserClient, chatId, content).catch(
       () => undefined,
@@ -389,6 +391,15 @@ async function confirmSentMessage(
     if (found !== undefined) {
       seen = found;
       if (found.ack !== undefined && found.ack >= 1) return found;
+      if (!reportedPending) {
+        // The message is queued but not on the wire yet. Leaving early here is
+        // what silently dropped reports: the client must stay open until the
+        // message actually leaves the device.
+        logger.info(
+          `Message to ${chatId} is queued locally (ack=0); waiting for it to leave the device...`,
+        );
+        reportedPending = true;
+      }
     }
     if (Date.now() >= deadline) return seen;
     await new Promise((resolve) => setTimeout(resolve, 1_000));
@@ -420,7 +431,7 @@ async function sendWhatsAppMessage(
   logger.warn(
     `The send call for ${chatId} returned no message; checking the chat for the message...`,
   );
-  const confirmed = await confirmSentMessage(client, chatId, content, 20_000);
+  const confirmed = await confirmSentMessage(client, chatId, content, 60_000, logger);
   if (confirmed === undefined) {
     throw new Error(
       `WhatsApp did not send the message to ${chatId}: the chat could not be resolved and no outgoing message appeared.`,
