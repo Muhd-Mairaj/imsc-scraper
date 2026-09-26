@@ -9,7 +9,10 @@ StartLimitIntervalSec=6h
 
 [Service]
 Type=oneshot
-WorkingDirectory=/home/mairaj/Documents/imsc-scraper
+# Install with `deploy/install.sh`, which rewrites this to the checkout it runs
+# from and `ExecStart` to the docker binary on the host. Copying this file
+# straight into /etc/systemd/system will leave the placeholder path here.
+WorkingDirectory=/path/to/imsc-scraper
 # compose runs the container as ${IMSC_UID:-1000}:${IMSC_GID:-1000}. If ./data
 # is owned by a different user, set IMSC_UID/IMSC_GID here or in this optional
 # env file; otherwise the container cannot write data/weekly-state.json and a
