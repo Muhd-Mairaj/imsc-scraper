@@ -1,0 +1,27 @@
+[Unit]
+Description=Send the IMSC month-end engagement report
+After=network-online.target docker.service
+Wants=network-online.target
+# Bound restart attempts so a persistent fault cannot spin indefinitely.
+# StartLimit* live in [Unit]; systemd ignores them in [Service].
+StartLimitBurst=3
+StartLimitIntervalSec=6h
+
+[Service]
+Type=oneshot
+# Startup can take minutes on a slow host, and a send is only confirmed once the
+# message leaves the device, so do not let the default 90s timeout kill a run
+# mid-send.
+TimeoutStartSec=0
+# Install with `deploy/install.sh`, which rewrites this to the checkout it runs
+# from and `ExecStart` to the docker binary on the host. Copying this file
+# straight into /etc/systemd/system will leave the placeholder path here.
+WorkingDirectory=/path/to/imsc-scraper
+# compose runs the container as ${IMSC_UID:-1000}:${IMSC_GID:-1000}. If ./data
+# is owned by a different user, set IMSC_UID/IMSC_GID here or in this optional
+# env file; otherwise the container cannot write data/weekly-state.json and a
+# failed retry re-sends the report.
+EnvironmentFile=-/etc/imsc-month-end.env
+ExecStart=/usr/bin/docker compose run --rm imsc month-end
+Restart=on-failure
+RestartSec=30min

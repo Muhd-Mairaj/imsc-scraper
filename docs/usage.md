@@ -38,6 +38,15 @@ Every script-sent message starts with `[AUTO MESSAGE]` and ends with `_~ Mairaj'
 
 Both the recipient and your own number are resolved to their current WhatsApp id (LID) before sending, and a send is only counted once the message leaves the device.
 
+## Month-end report
+
+`bun run dev month-end` sends the days since the last report up to the start of the current month, so the previous month's tally is complete on the 1st instead of after the next Saturday. If the last weekly ended Sat 29 Sep, the 1 Oct run covers 29 and 30 Sep.
+
+- The window starts at the last sent report and is capped at the start of the previous month, so a long gap cannot produce more than one month.
+- It uses the weekly message format and supports `--force` and `--dry-run`.
+- It records itself in `data/weekly-state.json` separately from the weekly report, so the next weekly still runs its normal Saturday-to-Saturday week (and repeats 29–30 Sep).
+- A run with nothing since the last report sends nothing.
+
 ## Logs
 
 Every run appends timestamped, levelled lines to `data/logs/imsc-YYYY-MM-DD.log` (UTC) and mirrors them to the terminal. Each line records the command and runtime, the WhatsApp lifecycle (initialising, ready, authenticated, QR), collection counts and warnings, send/acknowledgement outcomes, and any failure's stack trace. The newest 30 files are kept.

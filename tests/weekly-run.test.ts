@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import type { WeeklyState } from "../src/state.js";
-import { runWeeklyReport, type WeeklyRunDependencies } from "../src/weekly-run.js";
+import {
+  type ReportRunDependencies,
+  runMonthEndReport,
+  runWeeklyReport,
+} from "../src/weekly-run.js";
 
 const NOW = new Date("2026-09-18T22:00:00.000Z");
 const WINDOW_END = Date.parse("2026-09-18T16:00:00.000Z");
@@ -8,13 +12,14 @@ const WINDOW_END = Date.parse("2026-09-18T16:00:00.000Z");
 const EMPTY_STATE: WeeklyState = {
   lastReportWindowEnd: undefined,
   lastAlertWindowEnd: undefined,
+  lastMonthEndWindowEnd: undefined,
 };
 
-function harness(overrides: Partial<WeeklyRunDependencies> = {}) {
+function harness(overrides: Partial<ReportRunDependencies> = {}) {
   const sent: { chatId: string; content: string }[] = [];
   const saved: WeeklyState[] = [];
   const logs: string[] = [];
-  const dependencies: WeeklyRunDependencies = {
+  const dependencies: ReportRunDependencies = {
     now: NOW,
     collect: async () => ({
       items: [
@@ -196,4 +201,79 @@ test("an unsupported self send is swallowed", async () => {
   });
   await expect(runWeeklyReport(dependencies)).rejects.toThrow("history unavailable");
   expect(logs.some((line) => line.includes("cannot send to yourself"))).toBe(true);
+});
+
+// Month-end runs on the 1st. Here the last weekly ended Sat 29 Sep 00:00 MYT,
+// so the 1 Oct run covers 29 and 30 Sep.
+const MONTH_END_NOW = new Date("2026-09-30T22:00:00.000Z");
+const LAST_WEEKLY_END = Date.parse("2026-09-28T16:00:00.000Z");
+const MONTH_START = Date.parse("2026-09-30T16:00:00.000Z");
+
+function monthEndState(overrides: Partial<WeeklyState> = {}): WeeklyState {
+  return {
+    lastReportWindowEnd: LAST_WEEKLY_END,
+    lastAlertWindowEnd: undefined,
+    lastMonthEndWindowEnd: undefined,
+    ...overrides,
+  };
+}
+
+test("the month-end run sends the days since the last report", async () => {
+  const { dependencies, sent, saved } = harness({ now: MONTH_END_NOW, state: monthEndState() });
+  const outcome = await runMonthEndReport(dependencies);
+  expect(outcome).toEqual({ status: "sent", emptyWeek: false });
+  expect(sent).toHaveLength(1);
+  expect(sent[0]?.chatId).toBe("60123456789@c.us");
+  expect(saved.at(-1)?.lastMonthEndWindowEnd).toBe(MONTH_START);
+  // The weekly window end is left alone so the next weekly still runs.
+  expect(saved.at(-1)?.lastReportWindowEnd).toBe(LAST_WEEKLY_END);
+});
+
+test("the month-end window starts at the last report and ends at the month start", async () => {
+  let received: { startMs: number; endMs: number } | undefined;
+  const { dependencies } = harness({
+    now: MONTH_END_NOW,
+    state: monthEndState(),
+    collect: async (window) => {
+      received = window;
+      return { items: [], warnings: [] };
+    },
+  });
+  await runMonthEndReport(dependencies);
+  expect(received).toEqual({ startMs: LAST_WEEKLY_END, endMs: MONTH_START });
+});
+
+test("the month-end run skips when nothing has happened since the last report", async () => {
+  const { dependencies, sent, logs } = harness({
+    now: MONTH_END_NOW,
+    state: monthEndState({ lastReportWindowEnd: MONTH_START }),
+  });
+  const outcome = await runMonthEndReport(dependencies);
+  expect(outcome.status).toBe("skipped");
+  expect(sent).toHaveLength(0);
+  expect(logs.some((line) => line.includes("No complete days"))).toBe(true);
+});
+
+test("the month-end run skips a month that was already recorded", async () => {
+  const { dependencies, sent } = harness({
+    now: MONTH_END_NOW,
+    state: monthEndState({ lastMonthEndWindowEnd: MONTH_START }),
+    collect: async () => {
+      throw new Error("should not collect");
+    },
+  });
+  const outcome = await runMonthEndReport(dependencies);
+  expect(outcome.status).toBe("skipped");
+  expect(sent).toHaveLength(0);
+});
+
+test("force re-sends an already-recorded month-end", async () => {
+  const { dependencies, sent } = harness({
+    now: MONTH_END_NOW,
+    state: monthEndState({ lastMonthEndWindowEnd: MONTH_START }),
+    force: true,
+  });
+  const outcome = await runMonthEndReport(dependencies);
+  expect(outcome).toEqual({ status: "sent", emptyWeek: false });
+  expect(sent).toHaveLength(1);
 });

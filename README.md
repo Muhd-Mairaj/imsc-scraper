@@ -12,6 +12,7 @@ A read-only monthly and weekly WhatsApp activity summary for a Community announc
 - `verify` (default) — write the current month's engagement summary.
 - `setup` — link WhatsApp, choose the group, set the weekly recipient.
 - `weekly` — send the weekly engagement report (`--force`, `--dry-run`).
+- `month-end` — send the days since the last report up to the end of the month (`--force`, `--dry-run`).
 - `help` — print usage without starting WhatsApp (`--help` or `-h`).
 
 ```sh

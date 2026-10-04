@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { computeWeeklyWindow, formatWindowRange } from "../src/schedule.js";
+import { computeMonthEndWindow, computeWeeklyWindow, formatWindowRange } from "../src/schedule.js";
 
 // All expectations are UTC instants. Asia/Kuala_Lumpur is UTC+8 with no DST,
 // so a local Saturday 00:00 is the previous day at 16:00Z.
@@ -47,4 +47,41 @@ test("the window is exactly seven days long", () => {
 test("formatWindowRange shows the inclusive first and last day", () => {
   const window = computeWeeklyWindow(new Date("2026-09-18T22:00:00.000Z"));
   expect(formatWindowRange(window)).toBe("12/09/2026 – 18/09/2026");
+});
+
+// Month-end runs on the 1st and covers the days since the last report. Here the
+// last weekly ended Sat 29 Sep 00:00 MYT (28 Sep 16:00Z), so 1 Oct 06:00 MYT
+// reports 29 and 30 Sep.
+
+test("the month-end window runs from the last report to the month start", () => {
+  const window = computeMonthEndWindow(
+    new Date("2026-09-30T22:00:00.000Z"),
+    Date.parse("2026-09-28T16:00:00.000Z"),
+  );
+  expect(new Date(window.startMs).toISOString()).toBe("2026-09-28T16:00:00.000Z");
+  expect(new Date(window.endMs).toISOString()).toBe("2026-09-30T16:00:00.000Z");
+  expect(formatWindowRange(window)).toBe("29/09/2026 – 30/09/2026");
+});
+
+test("the month-end window is capped at the previous month start", () => {
+  const window = computeMonthEndWindow(
+    new Date("2026-09-30T22:00:00.000Z"),
+    Date.parse("2026-01-01T00:00:00.000Z"),
+  );
+  expect(new Date(window.startMs).toISOString()).toBe("2026-08-31T16:00:00.000Z");
+  expect(new Date(window.endMs).toISOString()).toBe("2026-09-30T16:00:00.000Z");
+});
+
+test("the month-end window falls back to the previous month when there is no last report", () => {
+  const window = computeMonthEndWindow(new Date("2026-09-30T22:00:00.000Z"), undefined);
+  expect(new Date(window.startMs).toISOString()).toBe("2026-08-31T16:00:00.000Z");
+  expect(new Date(window.endMs).toISOString()).toBe("2026-09-30T16:00:00.000Z");
+});
+
+test("a month-end run with nothing since the last report has an empty window", () => {
+  const window = computeMonthEndWindow(
+    new Date("2026-09-30T22:00:00.000Z"),
+    Date.parse("2026-09-30T16:00:00.000Z"),
+  );
+  expect(window.startMs).toBe(window.endMs);
 });
