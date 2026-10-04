@@ -4,11 +4,16 @@ import {
   loadWeeklyState,
   saveWeeklyState,
   shouldSendAlert,
+  shouldSendMonthEnd,
   shouldSendReport,
   weeklyStateFilePath,
 } from "../src/state.js";
 
-const EMPTY = { lastReportWindowEnd: undefined, lastAlertWindowEnd: undefined };
+const EMPTY = {
+  lastReportWindowEnd: undefined,
+  lastAlertWindowEnd: undefined,
+  lastMonthEndWindowEnd: undefined,
+};
 
 // These tests write to the real data/weekly-state.json. Preserve any existing
 // state so a test run cannot make the next weekly run resend a report.
@@ -41,10 +46,15 @@ test("a malformed state file reads as empty state rather than throwing", async (
 });
 
 test("state survives a save and load round trip", async () => {
-  await saveWeeklyState({ lastReportWindowEnd: 1_789_000_000_000, lastAlertWindowEnd: undefined });
+  await saveWeeklyState({
+    lastReportWindowEnd: 1_789_000_000_000,
+    lastAlertWindowEnd: undefined,
+    lastMonthEndWindowEnd: undefined,
+  });
   expect(await loadWeeklyState()).toEqual({
     lastReportWindowEnd: 1_789_000_000_000,
     lastAlertWindowEnd: undefined,
+    lastMonthEndWindowEnd: undefined,
   });
 });
 
@@ -68,4 +78,14 @@ test("alerts are tracked independently of reports", () => {
   expect(shouldSendAlert({ ...state, lastAlertWindowEnd: undefined }, 1_789_000_000_000)).toBe(
     true,
   );
+});
+
+test("month-end reports are tracked independently of the weekly report", () => {
+  expect(shouldSendMonthEnd(EMPTY, 1_790_000_000_000)).toBe(true);
+  expect(
+    shouldSendMonthEnd({ ...EMPTY, lastMonthEndWindowEnd: 1_790_000_000_000 }, 1_790_000_000_000),
+  ).toBe(false);
+  expect(
+    shouldSendMonthEnd({ ...EMPTY, lastReportWindowEnd: 1_790_000_000_000 }, 1_790_000_000_000),
+  ).toBe(true);
 });

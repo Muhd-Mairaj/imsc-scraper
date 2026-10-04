@@ -1,11 +1,17 @@
 import { renderMonthlyActivitySummary } from "./report.js";
 import {
+  computeMonthEndWindow,
   computeWeeklyWindow,
   formatWindowRange,
   WEEKLY_TIME_ZONE,
   type WeeklyWindow,
 } from "./schedule.js";
-import { shouldSendAlert, shouldSendReport, type WeeklyState } from "./state.js";
+import {
+  shouldSendAlert,
+  shouldSendMonthEnd,
+  shouldSendReport,
+  type WeeklyState,
+} from "./state.js";
 import { errorMessage } from "./utils.js";
 import { renderFailureAlert, renderWeeklyReport } from "./weekly.js";
 
@@ -14,7 +20,7 @@ export interface WeeklyEngagement {
   readonly warnings: readonly string[];
 }
 
-export interface WeeklyRunDependencies {
+export interface ReportRunDependencies {
   readonly now: Date;
   readonly collect: (window: WeeklyWindow) => Promise<WeeklyEngagement>;
   readonly sendMessage: (chatId: string, content: string) => Promise<void>;
@@ -34,9 +40,17 @@ export interface WeeklyOutcome {
   readonly emptyWeek: boolean;
 }
 
+/** How one report differs from another: its window and how it records itself. */
+interface ReportPlan {
+  readonly label: string;
+  readonly window: WeeklyWindow;
+  readonly needsSending: (state: WeeklyState, windowEndMs: number) => boolean;
+  readonly recordSent: (state: WeeklyState, windowEndMs: number) => WeeklyState;
+}
+
 /** Best effort: a failed alert is logged, and the original error still propagates. */
 async function alertBestEffort(
-  dependencies: WeeklyRunDependencies,
+  dependencies: ReportRunDependencies,
   window: WeeklyWindow,
   error: unknown,
 ): Promise<void> {
@@ -59,18 +73,23 @@ async function alertBestEffort(
   }
 }
 
-export async function runWeeklyReport(dependencies: WeeklyRunDependencies): Promise<WeeklyOutcome> {
-  const window = computeWeeklyWindow(dependencies.now);
+async function runReport(
+  dependencies: ReportRunDependencies,
+  plan: ReportPlan,
+): Promise<WeeklyOutcome> {
+  const { window, label } = plan;
   dependencies.log(
-    `Weekly window: ${formatWindowRange(window)} (${WEEKLY_TIME_ZONE}), ending ${window.endMs}.`,
+    `${label} window: ${formatWindowRange(window)} (${WEEKLY_TIME_ZONE}), ending ${window.endMs}.`,
   );
 
   if (
     !dependencies.force &&
     !dependencies.dryRun &&
-    !shouldSendReport(dependencies.state, window.endMs)
+    !plan.needsSending(dependencies.state, window.endMs)
   ) {
-    dependencies.log(`The weekly report for the window ending ${window.endMs} was already sent.`);
+    dependencies.log(
+      `The ${label.toLowerCase()} report for the window ending ${window.endMs} was already sent.`,
+    );
     return { status: "skipped", emptyWeek: false };
   }
 
@@ -80,7 +99,7 @@ export async function runWeeklyReport(dependencies: WeeklyRunDependencies): Prom
     const body = renderMonthlyActivitySummary(collected.items, collected.warnings);
     const emptyWeek = collected.items.length === 0;
     dependencies.log(
-      `Collected ${collected.items.length} activity item(s); the week is ${emptyWeek ? "empty" : "not empty"}.`,
+      `Collected ${collected.items.length} activity item(s); the period is ${emptyWeek ? "empty" : "not empty"}.`,
     );
 
     if (dependencies.dryRun) {
@@ -91,20 +110,24 @@ export async function runWeeklyReport(dependencies: WeeklyRunDependencies): Prom
       return { status: "dry-run", emptyWeek };
     }
 
-    dependencies.log(`Sending the weekly report to ${dependencies.recipientChatId}...`);
+    dependencies.log(
+      `Sending the ${label.toLowerCase()} report to ${dependencies.recipientChatId}...`,
+    );
     await dependencies.sendMessage(
       dependencies.recipientChatId,
       renderWeeklyReport(window, emptyWeek ? "" : body),
     );
-    await dependencies.saveState({ ...dependencies.state, lastReportWindowEnd: window.endMs });
-    dependencies.log(`Sent the weekly report for the window ending ${window.endMs}.`);
+    await dependencies.saveState(plan.recordSent(dependencies.state, window.endMs));
+    dependencies.log(
+      `Sent the ${label.toLowerCase()} report for the window ending ${window.endMs}.`,
+    );
 
     if (emptyWeek && dependencies.selfChatId !== undefined) {
       try {
         await dependencies.sendMessage(dependencies.selfChatId, renderWeeklyReport(window, ""));
       } catch (noticeError) {
         dependencies.log(
-          `The empty-week notice could not be sent to you: ${errorMessage(noticeError)}`,
+          `The empty-period notice could not be sent to you: ${errorMessage(noticeError)}`,
         );
       }
     }
@@ -114,4 +137,31 @@ export async function runWeeklyReport(dependencies: WeeklyRunDependencies): Prom
     await alertBestEffort(dependencies, window, error);
     throw error;
   }
+}
+
+export async function runWeeklyReport(dependencies: ReportRunDependencies): Promise<WeeklyOutcome> {
+  return runReport(dependencies, {
+    label: "Weekly",
+    window: computeWeeklyWindow(dependencies.now),
+    needsSending: shouldSendReport,
+    recordSent: (state, windowEndMs) => ({ ...state, lastReportWindowEnd: windowEndMs }),
+  });
+}
+
+export async function runMonthEndReport(
+  dependencies: ReportRunDependencies,
+): Promise<WeeklyOutcome> {
+  const window = computeMonthEndWindow(dependencies.now, dependencies.state.lastReportWindowEnd);
+  if (window.startMs >= window.endMs) {
+    dependencies.log(
+      "No complete days have passed since the last report; skipping the month-end report.",
+    );
+    return { status: "skipped", emptyWeek: false };
+  }
+  return runReport(dependencies, {
+    label: "Month-end",
+    window,
+    needsSending: shouldSendMonthEnd,
+    recordSent: (state, windowEndMs) => ({ ...state, lastMonthEndWindowEnd: windowEndMs }),
+  });
 }

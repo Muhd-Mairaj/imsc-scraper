@@ -8,6 +8,7 @@ export const weeklyStateFilePath = join(dataDirectory, "weekly-state.json");
 const stateSchema = z.object({
   lastReportWindowEnd: z.number().optional(),
   lastAlertWindowEnd: z.number().optional(),
+  lastMonthEndWindowEnd: z.number().optional(),
 });
 
 export type WeeklyState = z.infer<typeof stateSchema>;
@@ -15,6 +16,7 @@ export type WeeklyState = z.infer<typeof stateSchema>;
 const EMPTY_STATE: WeeklyState = Object.freeze({
   lastReportWindowEnd: undefined,
   lastAlertWindowEnd: undefined,
+  lastMonthEndWindowEnd: undefined,
 });
 
 /** Missing or malformed state is empty state, never an error — worst case we resend once. */
@@ -36,6 +38,7 @@ export async function loadWeeklyState(): Promise<WeeklyState> {
   return {
     lastReportWindowEnd: result.data.lastReportWindowEnd,
     lastAlertWindowEnd: result.data.lastAlertWindowEnd,
+    lastMonthEndWindowEnd: result.data.lastMonthEndWindowEnd,
   };
 }
 
@@ -55,4 +58,8 @@ export function shouldSendReport(state: WeeklyState, windowEndMs: number): boole
 
 export function shouldSendAlert(state: WeeklyState, windowEndMs: number): boolean {
   return state.lastAlertWindowEnd !== windowEndMs;
+}
+
+export function shouldSendMonthEnd(state: WeeklyState, windowEndMs: number): boolean {
+  return state.lastMonthEndWindowEnd !== windowEndMs;
 }

@@ -11,6 +11,24 @@ test("recognizes the setup and weekly commands", () => {
   expect(parseCommand(["weekly"])).toEqual({ command: "weekly", force: false, dryRun: false });
 });
 
+test("recognizes the month-end command and its flags", () => {
+  expect(parseCommand(["month-end"])).toEqual({
+    command: "month-end",
+    force: false,
+    dryRun: false,
+  });
+  expect(parseCommand(["month-end", "--force"])).toEqual({
+    command: "month-end",
+    force: true,
+    dryRun: false,
+  });
+  expect(parseCommand(["month-end", "--dry-run"])).toEqual({
+    command: "month-end",
+    force: false,
+    dryRun: true,
+  });
+});
+
 test("weekly accepts --force in any position", () => {
   expect(parseCommand(["weekly", "--force"])).toEqual({
     command: "weekly",

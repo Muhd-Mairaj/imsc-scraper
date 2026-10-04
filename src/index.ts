@@ -24,7 +24,7 @@ import {
 } from "./report.js";
 import { loadWeeklyState, saveWeeklyState } from "./state.js";
 import { describeAck, errorMessage, phoneDigits } from "./utils.js";
-import { runWeeklyReport } from "./weekly-run.js";
+import { type ReportRunDependencies, runMonthEndReport, runWeeklyReport } from "./weekly-run.js";
 import {
   discoverWhatsAppWeeklyMarkers,
   findWhatsAppSentMessage,
@@ -110,14 +110,15 @@ async function runSetup(client: WAWebJS.Client, logger: Logger): Promise<void> {
   console.log(`Saved “${selectedChat.name}” to ${configFilePath}`);
 }
 
-async function runWeekly(
+async function runScheduledReport(
+  kind: "weekly" | "month-end",
   client: WAWebJS.Client,
   force: boolean,
   dryRun: boolean,
   logger: Logger,
 ): Promise<void> {
   if (client.pupPage === undefined) {
-    throw new Error("WhatsApp Web did not provide a browser page for the weekly report.");
+    throw new Error("WhatsApp Web did not provide a browser page for the report.");
   }
   const config = await loadConfig();
   const recipient = config.weeklyReportRecipient;
@@ -131,10 +132,10 @@ async function runWeekly(
   const state = await loadWeeklyState();
   const recipientChatId = await resolveChatId(client, recipient, logger);
   logger.info(
-    `Weekly run starting: recipient=${recipientChatId}, self=${selfChatId}, force=${force}, dryRun=${dryRun}.`,
+    `${kind} run starting: recipient=${recipientChatId}, self=${selfChatId}, force=${force}, dryRun=${dryRun}.`,
   );
 
-  await runWeeklyReport({
+  const dependencies: ReportRunDependencies = {
     now: new Date(),
     collect: async (window) => {
       const probe = await probeWhatsAppGroupHistory(browserClient, config.selectedChat.id);
@@ -146,7 +147,9 @@ async function runWeekly(
         probe.oldestLoadedTimestampMs === undefined ||
         probe.oldestLoadedTimestampMs > window.startMs
       ) {
-        warnings.push("History may not reach the start of the reporting week.");
+        warnings.push(
+          `History may not reach the start of the reporting ${kind === "weekly" ? "week" : "month"}.`,
+        );
       }
       const collected = await collectEngagement(browserClient, config, {
         startMs: window.startMs,
@@ -166,7 +169,9 @@ async function runWeekly(
     log: (message) => {
       logger.info(message);
     },
-  });
+  };
+
+  await (kind === "weekly" ? runWeeklyReport(dependencies) : runMonthEndReport(dependencies));
 }
 
 function eligibleParticipants(
@@ -500,8 +505,8 @@ async function main(): Promise<void> {
     logger.info("WhatsApp Web is ready.");
     if (command === "setup") {
       await runSetup(client, logger);
-    } else if (command === "weekly") {
-      await runWeekly(client, force, dryRun, logger);
+    } else if (command === "weekly" || command === "month-end") {
+      await runScheduledReport(command, client, force, dryRun, logger);
     } else {
       await verifySelectedChat(client, logger);
     }
