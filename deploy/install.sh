@@ -37,7 +37,7 @@ fi
 render_service() {
   sed \
     -e "s|^WorkingDirectory=.*|WorkingDirectory=$repo_dir|" \
-    -e "s|^ExecStart=.*|ExecStart=$docker_bin compose run --rm imsc $2|" \
+    -e "s|^ExecStart=.*|ExecStart=$docker_bin compose run --rm --name imsc-$2 imsc $2|" \
     "$1"
 }
 
@@ -69,6 +69,6 @@ systemctl reset-failed imsc-weekly.service imsc-month-end.service 2>/dev/null ||
 
 echo "Installed the weekly and month-end report timers"
 echo "  WorkingDirectory=$repo_dir"
-echo "  ExecStart=$docker_bin compose run --rm imsc weekly"
-echo "  ExecStart=$docker_bin compose run --rm imsc month-end"
+echo "  ExecStart=$docker_bin compose run --rm --name imsc-weekly imsc weekly"
+echo "  ExecStart=$docker_bin compose run --rm --name imsc-month-end imsc month-end"
 systemctl list-timers imsc-weekly.timer imsc-month-end.timer --no-pager || true

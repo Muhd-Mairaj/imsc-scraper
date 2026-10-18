@@ -17,6 +17,13 @@ services:
       - ALL
     security_opt:
       - no-new-privileges
+    # A stuck Chromium must not be able to take the whole host down.
+    mem_limit: 1536m
+    memswap_limit: 2g
+    pids_limit: 512
+    cpus: 1.0
+    shm_size: 512m
+    stop_grace_period: 60s
     environment:
       WHATSAPP_HEADLESS: "true"
       WHATSAPP_DOCKER: "true"

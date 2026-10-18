@@ -40,15 +40,51 @@ import {
 
 const { Client, LocalAuth } = WAWebJS;
 
-function waitForClientReady(client: WAWebJS.Client): Promise<void> {
+const WHATSAPP_READY_TIMEOUT_MS = 10 * 60_000;
+
+function waitForClientReady(
+  client: WAWebJS.Client,
+  timeoutMs = WHATSAPP_READY_TIMEOUT_MS,
+): Promise<void> {
   return new Promise((resolve, reject) => {
-    client.once("ready", resolve);
-    client.once("auth_failure", (message: string) => {
-      reject(new Error(`WhatsApp authentication failed: ${message}`));
-    });
-    client.once("disconnected", (reason: WAWebJS.WAState | "LOGOUT") => {
-      reject(new Error(`WhatsApp disconnected before it was ready: ${reason}`));
-    });
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const cleanup = (): void => {
+      if (timer !== undefined) clearTimeout(timer);
+      client.removeListener("ready", onReady);
+      client.removeListener("auth_failure", onAuthFailure);
+      client.removeListener("disconnected", onDisconnected);
+    };
+
+    const settle = (callback: () => void): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback();
+    };
+
+    const onReady = (): void => settle(resolve);
+    const onAuthFailure = (message: string): void =>
+      settle(() => reject(new Error(`WhatsApp authentication failed: ${message}`)));
+    const onDisconnected = (reason: WAWebJS.WAState | "LOGOUT"): void =>
+      settle(() => reject(new Error(`WhatsApp disconnected before it was ready: ${reason}`)));
+
+    timer = setTimeout(() => {
+      settle(() =>
+        reject(
+          new Error(
+            `WhatsApp Web did not become ready within ${timeoutMs}ms. ` +
+              "The browser may have loaded WhatsApp but whatsapp-web.js missed the ready event; " +
+              "clear data/.wwebjs_cache and retry.",
+          ),
+        ),
+      );
+    }, timeoutMs);
+
+    client.once("ready", onReady);
+    client.once("auth_failure", onAuthFailure);
+    client.once("disconnected", onDisconnected);
   });
 }
 
