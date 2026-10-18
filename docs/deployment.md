@@ -43,7 +43,7 @@ journalctl -u imsc-month-end.service
 
 ## Troubleshooting
 
-- Stuck after `WhatsApp authenticated` (never reaches `WhatsApp Web is ready`): the cached WhatsApp Web build or a stale Chromium profile lock is the usual cause. Clear them and retry:
+- Stuck after `WhatsApp authenticated` (never reaches `WhatsApp Web is ready`): the app now aborts after 10 minutes, and systemd caps a run at 45 minutes. The cached WhatsApp Web build or a stale Chromium profile lock is the usual cause. Clear them and retry:
 
   ```sh
   rm -rf data/.wwebjs_cache data/auth/session-imsc-scraper/Singleton*

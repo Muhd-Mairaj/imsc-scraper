@@ -12,7 +12,7 @@ Type=oneshot
 # Startup can take minutes on a slow host, and a send is only confirmed once the
 # message leaves the device, so do not let the default 90s timeout kill a run
 # mid-send.
-TimeoutStartSec=0
+TimeoutStartSec=45min
 # Install with `deploy/install.sh`, which rewrites this to the checkout it runs
 # from and `ExecStart` to the docker binary on the host. Copying this file
 # straight into /etc/systemd/system will leave the placeholder path here.
@@ -22,6 +22,9 @@ WorkingDirectory=/path/to/imsc-scraper
 # env file; otherwise the container cannot write data/weekly-state.json and a
 # failed retry re-sends the report.
 EnvironmentFile=-/etc/imsc-month-end.env
-ExecStart=/usr/bin/docker compose run --rm imsc month-end
+ExecStartPre=-/usr/bin/docker rm -f imsc-month-end
+ExecStart=/usr/bin/docker compose run --rm --name imsc-month-end imsc month-end
+ExecStop=-/usr/bin/docker rm -f imsc-month-end
+TimeoutStopSec=60
 Restart=on-failure
-RestartSec=30min
+RestartSec=10min

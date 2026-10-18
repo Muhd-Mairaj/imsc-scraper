@@ -13,8 +13,8 @@ test("install.sh points the services at their own checkout", () => {
   expect(result.exitCode).toBe(0);
   expect(output).toContain(`WorkingDirectory=${repoRoot}\n`);
   expect(output).not.toContain("/path/to/imsc-scraper");
-  expect(output).toMatch(/^ExecStart=\S+ compose run --rm imsc weekly$/mu);
-  expect(output).toMatch(/^ExecStart=\S+ compose run --rm imsc month-end$/mu);
+  expect(output).toMatch(/^ExecStart=\S+ compose run --rm --name imsc-weekly imsc weekly$/mu);
+  expect(output).toMatch(/^ExecStart=\S+ compose run --rm --name imsc-month-end imsc month-end$/mu);
 });
 
 test("the committed service units carry no machine-specific path", () => {
