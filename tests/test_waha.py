@@ -146,3 +146,21 @@ def test_message_parses_a_poll_revoke_reactions_and_ack():
         }
     )
     assert reacted.reactions[0]["text"] == "👍"
+
+
+def test_messages_before_uses_an_inclusive_upper_bound_and_descending_order():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json=[{"id": "old", "timestamp": 1_699_999_000, "body": "x"}],
+        )
+
+    client(handler).messages_before("g@g.us", 1_700_000_000_000)
+
+    query = requests[0].url.params
+    assert query["limit"] == "1"
+    assert query["sortOrder"] == "desc"
+    assert query["filter.timestamp.lte"] == "1699999999"

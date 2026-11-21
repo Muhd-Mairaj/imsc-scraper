@@ -247,21 +247,12 @@ def collect_engagement(
     chat_id = config.selected_chat.id
     warnings: list[str] = []
 
-    oldest = waha.oldest_message(chat_id)
-    if oldest is None or oldest.timestamp_ms is None:
+    before = waha.messages_before(chat_id, window.start_ms)
+    if not before:
         message = (
-            f"The WhatsApp chat {chat_id} has no stored messages; "
-            "cannot verify that history reaches the report start."
-        )
-        if strict:
-            raise CollectionError(message)
-        warnings.append("History may not reach the start of the current month.")
-    elif oldest.timestamp_ms > window.start_ms:
-        message = (
-            f"WhatsApp's stored history for {chat_id} starts "
-            f"{_iso(oldest.timestamp_ms)} and does not reach the report start "
-            f"{_iso(window.start_ms)}; refusing to send an incomplete report. "
-            "Wait for WAHA to finish syncing and retry."
+            f"WhatsApp's stored history for {chat_id} has no message before "
+            f"the report start {_iso(window.start_ms)}; refusing to send an "
+            "incomplete report. Wait for WAHA to finish syncing and retry."
         )
         if strict:
             raise CollectionError(message)

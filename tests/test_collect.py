@@ -16,17 +16,17 @@ WINDOW = WeeklyWindow(START_MS, END_MS)
 
 
 class FakeWaha:
-    def __init__(self, messages, oldest=None, contacts=None, lids=None):
+    def __init__(self, messages, before=None, contacts=None, lids=None):
         self._messages = messages
-        self._oldest = oldest
+        self._before = before or []
         self._contacts = contacts or {}
         self._lids = lids or {}
 
     def messages(self, _chat_id, _start_ms, _end_ms):
         return self._messages
 
-    def oldest_message(self, _chat_id):
-        return self._oldest
+    def messages_before(self, _chat_id, _before_ms):
+        return self._before
 
     def phone_for_lid(self, lid):
         return self._lids.get(lid)
@@ -88,8 +88,8 @@ def store(tmp_path: Path) -> EventStore:
     return value
 
 
-def oldest_before_window() -> WahaMessage:
-    return message(id="old", timestamp=START_S - 3600, from_="g@g.us", fromMe=False)
+def oldest_before_window() -> list[WahaMessage]:
+    return [message(id="old", timestamp=START_S - 3600, from_="g@g.us", fromMe=False)]
 
 
 def test_a_poll_marker_uses_store_votes_and_resolves_the_voter(tmp_path: Path):
@@ -97,7 +97,7 @@ def test_a_poll_marker_uses_store_votes_and_resolves_the_voter(tmp_path: Path):
     events.upsert_poll_vote("poll1", "alice@lid", ["Yes"], START_S)
     waha = FakeWaha(
         [marker(START_S + 3600), poll(START_S + 7200)],
-        oldest=oldest_before_window(),
+        before=oldest_before_window(),
         contacts={
             "alice@lid": {"username": "alice", "number": "60123"},
             "60123@c.us": {"number": "60123"},
@@ -116,7 +116,7 @@ def test_a_poll_marker_uses_store_votes_and_resolves_the_voter(tmp_path: Path):
 def test_a_reaction_marker_uses_reaction_senders(tmp_path: Path):
     waha = FakeWaha(
         [marker(START_S + 3600), reaction_post(START_S + 7200)],
-        oldest=oldest_before_window(),
+        before=oldest_before_window(),
         contacts={
             "bob@lid": {"username": "bob", "number": "60124"},
             "60124@c.us": {"number": "60124"},
@@ -136,7 +136,7 @@ def test_ignored_phone_numbers_are_filtered_by_resolved_phone(tmp_path: Path):
     events.upsert_poll_vote("poll1", "alice@lid", ["Yes"], START_S)
     waha = FakeWaha(
         [marker(START_S + 3600), poll(START_S + 7200)],
-        oldest=oldest_before_window(),
+        before=oldest_before_window(),
         contacts={"alice@lid": {"username": "alice", "number": "60123"}},
         lids={"alice@lid": "60123@c.us"},
     )
@@ -159,7 +159,7 @@ def test_a_revoked_follow_up_uses_a_same_day_replacement(tmp_path: Path):
     replacement = reaction_post(base + 7200)
     waha = FakeWaha(
         [marker(base), revoked, replacement],
-        oldest=oldest_before_window(),
+        before=oldest_before_window(),
         contacts={
             "bob@lid": {"username": "bob", "number": "60124"},
             "60124@c.us": {"number": "60124"},
@@ -185,17 +185,17 @@ def test_a_title_followed_by_another_title_has_no_marker():
 def test_incomplete_history_fails_closed_in_strict_mode(tmp_path: Path):
     waha = FakeWaha(
         [marker(START_S + 3600), poll(START_S + 7200)],
-        oldest=message(id="newest", timestamp=START_S + 3600, from_="g@g.us", fromMe=False),
+        before=[],
     )
 
-    with pytest.raises(CollectionError, match="does not reach the report start"):
+    with pytest.raises(CollectionError, match="no message before"):
         collect_engagement(waha, config(), store(tmp_path), WINDOW, "me@lid")
 
 
 def test_incomplete_history_is_a_warning_in_lenient_mode(tmp_path: Path):
     waha = FakeWaha(
         [marker(START_S + 3600), poll(START_S + 7200)],
-        oldest=message(id="newest", timestamp=START_S + 3600, from_="g@g.us", fromMe=False),
+        before=[],
     )
 
     result = collect_engagement(waha, config(), store(tmp_path), WINDOW, "me@lid", strict=False)
@@ -213,7 +213,7 @@ def test_stored_poll_updates_supply_voters_before_the_ingester_started(tmp_path:
     )
     waha = FakeWaha(
         [marker(START_S + 3600), poll_with_updates],
-        oldest=oldest_before_window(),
+        before=oldest_before_window(),
         contacts={"alice@lid": {"username": "alice", "number": "60123"}},
         lids={"alice@lid": "60123@c.us"},
     )
@@ -234,7 +234,7 @@ def test_encrypted_poll_updates_without_voter_keys_fail_closed(tmp_path: Path):
     )
     waha = FakeWaha(
         [marker(START_S + 3600), poll_with_updates],
-        oldest=oldest_before_window(),
+        before=oldest_before_window(),
     )
 
     with pytest.raises(CollectionError, match="no recoverable voter identities"):
@@ -242,6 +242,6 @@ def test_encrypted_poll_updates_without_voter_keys_fail_closed(tmp_path: Path):
 
 
 def test_a_chat_with_no_stored_messages_fails_closed(tmp_path: Path):
-    waha = FakeWaha([], oldest=None)
-    with pytest.raises(CollectionError, match="no stored messages"):
+    waha = FakeWaha([], before=[])
+    with pytest.raises(CollectionError, match="no message before"):
         collect_engagement(waha, config(), store(tmp_path), WINDOW, "me@lid")

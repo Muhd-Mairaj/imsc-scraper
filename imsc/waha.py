@@ -313,7 +313,7 @@ class WahaClient:
             offset += limit
         return messages
 
-    def oldest_message(self, chat_id: str) -> WahaMessage | None:
+    def messages_before(self, chat_id: str, before_ms: int) -> list[WahaMessage]:
         payload = self._request(
             "GET",
             f"/api/{quote(self.session)}/chats/{quote(chat_id, safe='')}/messages",
@@ -321,12 +321,12 @@ class WahaClient:
                 "limit": 1,
                 "offset": 0,
                 "sortBy": "timestamp",
-                "sortOrder": "asc",
+                "sortOrder": "desc",
+                "filter.timestamp.lte": (before_ms - 1) // 1000,
                 "merge": "true",
             },
         )
-        page = self._parse_message_list(payload)
-        return page[0] if page else None
+        return self._parse_message_list(payload)
 
     def send_text(self, chat_id: str, text: str) -> JSON:
         payload = self._request(
