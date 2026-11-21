@@ -2,8 +2,10 @@ import json
 from datetime import datetime
 
 import httpx
+import pytest
 
 from imsc import cli
+from imsc.collect import CollectionError
 from imsc.schedule import TZ
 from imsc.waha import WahaClient
 
@@ -86,3 +88,14 @@ def test_weekly_dry_run_through_the_cli(tmp_path, monkeypatch, capsys):
     assert "14/11/2026" not in output
     assert "07/11/2026 – 13/11/2026" in output
     assert "filter.timestamp.gte=" in str(state["last_query"])
+
+
+def test_the_report_fails_closed_when_the_ingester_is_unreachable(monkeypatch):
+    monkeypatch.setenv("IMSC_INGEST_URL", "http://127.0.0.1:1")
+    with pytest.raises(CollectionError, match="not reachable"):
+        cli._ensure_ingester()
+
+
+def test_no_ingester_url_skips_the_health_check(monkeypatch):
+    monkeypatch.delenv("IMSC_INGEST_URL", raising=False)
+    cli._ensure_ingester()

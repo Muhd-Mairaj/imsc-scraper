@@ -1,19 +1,15 @@
-FROM oven/bun:1.3.14
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    TZ=Asia/Kuala_Lumpur
 
 WORKDIR /app
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends chromium ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
+COPY pyproject.toml ./
+COPY imsc ./imsc
+RUN pip install .
 
-ENV PUPPETEER_SKIP_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-ENV WHATSAPP_HEADLESS=true
-ENV WHATSAPP_DOCKER=true
-
-COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
-
-COPY src ./src
-
-ENTRYPOINT ["bun", "run", "src/index.ts"]
+ENTRYPOINT ["imsc"]
+CMD ["help"]

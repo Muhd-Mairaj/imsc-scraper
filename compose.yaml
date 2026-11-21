@@ -1,34 +1,61 @@
 services:
-  imsc:
-    build: .
-    # Fixed hostname keeps Chromium's profile lock stable across runs, so an
-    # interrupted run does not leave a lock that looks like "another computer".
-    hostname: imsc
-    init: true
-    stdin_open: true
-    tty: true
-    # Run as the owner of ./data so the session and summaries do not come back
-    # root-owned on the host. The image ships a `bun` user at uid/gid 1000.
-    user: "${IMSC_UID:-1000}:${IMSC_GID:-1000}"
-    # Chromium ships with its own sandbox, but the container cannot use it
-    # anyway (WHATSAPP_DOCKER=true passes --no-sandbox), so dropping every
-    # capability and blocking privilege escalation costs us nothing.
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges
-    # A stuck Chromium must not be able to take the whole host down.
-    mem_limit: 1536m
-    memswap_limit: 2g
-    pids_limit: 512
-    cpus: 1.0
-    shm_size: 512m
-    stop_grace_period: 60s
+  waha:
+    image: devlikeapro/waha:gows
+    restart: unless-stopped
     environment:
-      WHATSAPP_HEADLESS: "true"
-      WHATSAPP_DOCKER: "true"
-      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
-      # Pin the report timezone; the container otherwise defaults to UTC.
+      WHATSAPP_DEFAULT_ENGINE: GOWS
+      WHATSAPP_START_SESSION: default
+      WAHA_API_KEY: ${WAHA_API_KEY:?set WAHA_API_KEY in .env}
+      # The ingester is the only consumer; the report reads WAHA's store.
+      WHATSAPP_HOOK_URL: http://imsc-ingest:8000/webhook
+      WHATSAPP_HOOK_EVENTS: poll.vote,message.reaction
+      WAHA_PRINT_QR: "True"
+      TZ: Asia/Kuala_Lumpur
+      # Keep the initial sync small; these flags are applied when the device
+      # is linked, so they take effect on the re-pair.
+      WAHA_GOWS_DEVICE_REQUIRE_FULL_SYNC: "false"
+      WAHA_GOWS_DEVICE_HISTORY_SYNC_FULL_SYNC_DAYS_LIMIT: "90"
+      WAHA_GOWS_DEVICE_HISTORY_SYNC_RECENT_SYNC_DAYS_LIMIT: "30"
+      WAHA_GOWS_DEVICE_HISTORY_SYNC_SUPPORT_CAG_REACTIONS_AND_POLLS: "true"
+      WAHA_GOWS_DEVICE_HISTORY_SYNC_ON_DEMAND_READY: "true"
+    volumes:
+      - ./data/waha:/app/.sessions
+    ports:
+      # Keep the dashboard and QR endpoint off the public interface.
+      - "127.0.0.1:3000:3000"
+    mem_limit: 512m
+
+  imsc-ingest:
+    build: .
+    restart: unless-stopped
+    command: ["ingest"]
+    user: "${IMSC_UID:-1000}:${IMSC_GID:-1000}"
+    environment:
+      IMSC_DATA_DIR: /app/data
+      IMSC_INGEST_PORT: "8000"
       TZ: Asia/Kuala_Lumpur
     volumes:
       - ./data:/app/data
+    expose:
+      - "8000"
+    depends_on:
+      - waha
+    mem_limit: 256m
+
+  # One-off report runner: docker compose --profile tools run --rm imsc-report weekly
+  imsc-report:
+    build: .
+    profiles: ["tools"]
+    user: "${IMSC_UID:-1000}:${IMSC_GID:-1000}"
+    environment:
+      WAHA_URL: http://waha:3000
+      WAHA_SESSION: default
+      WAHA_API_KEY: ${WAHA_API_KEY:?set WAHA_API_KEY in .env}
+      IMSC_DATA_DIR: /app/data
+      IMSC_INGEST_URL: http://imsc-ingest:8000
+      TZ: Asia/Kuala_Lumpur
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - waha
+    mem_limit: 256m

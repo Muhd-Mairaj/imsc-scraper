@@ -1,11 +1,14 @@
-# Dependencies
-node_modules/
-
-# Build output
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
 build/
-*.tsbuildinfo
+dist/
+*.egg-info/
 
-# Local WhatsApp credentials, configuration, and web cache
+# Local WhatsApp data and credentials
 data/
 .wwebjs_cache/
 

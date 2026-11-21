@@ -1,7 +1,7 @@
 [Unit]
 Description=Send the IMSC weekly engagement report
-After=network-online.target docker.service
-Wants=network-online.target
+After=network-online.target docker.service imsc-stack.service
+Wants=network-online.target imsc-stack.service
 # Bound restart attempts so a persistent fault cannot spin indefinitely.
 # StartLimit* live in [Unit]; systemd ignores them in [Service].
 StartLimitBurst=3
@@ -9,21 +9,15 @@ StartLimitIntervalSec=6h
 
 [Service]
 Type=oneshot
-# Startup can take minutes on a slow host, and a send is only confirmed once the
-# message leaves the device, so do not let the default 90s timeout kill a run
-# mid-send.
-TimeoutStartSec=45min
+# WAHA is already running; the report is a short REST + SQLite job. Keep a
+# generous bound for a first sync or a slow send confirmation.
+TimeoutStartSec=15min
 # Install with `deploy/install.sh`, which rewrites this to the checkout it runs
-# from and `ExecStart` to the docker binary on the host. Copying this file
-# straight into /etc/systemd/system will leave the placeholder path here.
+# from and `ExecStart` to the docker binary on the host.
 WorkingDirectory=/path/to/imsc-scraper
-# compose runs the container as ${IMSC_UID:-1000}:${IMSC_GID:-1000}. If ./data
-# is owned by a different user, set IMSC_UID/IMSC_GID here or in this optional
-# env file; otherwise the container cannot write data/weekly-state.json and a
-# failed retry re-sends the report.
 EnvironmentFile=-/etc/imsc-weekly.env
 ExecStartPre=-/usr/bin/docker rm -f imsc-weekly
-ExecStart=/usr/bin/docker compose run --rm --name imsc-weekly imsc weekly
+ExecStart=/usr/bin/docker compose --profile tools run --rm --name imsc-weekly imsc-report weekly
 ExecStop=-/usr/bin/docker rm -f imsc-weekly
 TimeoutStopSec=60
 Restart=on-failure

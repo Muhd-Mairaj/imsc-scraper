@@ -9,6 +9,8 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime
 
+import httpx
+
 from .collect import CollectionError, collect_engagement
 from .config import (
     AppConfig,
@@ -185,6 +187,21 @@ def _me_id(waha: WahaClient) -> tuple[str | None, str | None]:
     return chat_id, lid
 
 
+def _ensure_ingester() -> None:
+    """A report needs the live event store; refuse to run without it."""
+    url = os.environ.get("IMSC_INGEST_URL")
+    if not url:
+        return
+    try:
+        response = httpx.get(f"{url.rstrip('/')}/health", timeout=5)
+        response.raise_for_status()
+    except Exception as error:
+        raise CollectionError(
+            f"The WAHA event ingester at {url} is not reachable ({error}); "
+            "refusing to send an incomplete report."
+        ) from error
+
+
 def run_scheduled_report(
     command: str, force: bool, dry_run: bool, now: datetime, logger: Logger
 ) -> None:
@@ -209,6 +226,7 @@ def run_scheduled_report(
         )
 
         def collect(window: WeeklyWindow):
+            _ensure_ingester()
             return collect_engagement(
                 waha, config, store, window, me_lid or me_chat_id, strict=True
             )
