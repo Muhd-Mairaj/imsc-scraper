@@ -282,27 +282,25 @@ def collect_engagement(
             poll_id = following.id
             votes = store.poll_voters(poll_id) if poll_id else []
             updates = following.poll_updates
-            captured = [vote.voter_id for vote in votes]
-            encrypted_voters = poll_update_voters(updates, me_id)
-            if updates and not votes:
+            live_voters = {vote.voter_id for vote in votes}
+            stored_voters = poll_update_voters(updates, me_id)
+            captured = list(dict.fromkeys([*live_voters, *stored_voters]))
+            if updates and not captured:
                 message = (
                     f"{item_date}: the poll has {len(updates)} encrypted vote "
-                    "record(s) but the event ingester has none; is imsc-ingest "
-                    "running? Refusing to send an incomplete report."
+                    "record(s) but no recoverable voter identities; refusing to "
+                    "send an incomplete report."
                 )
                 if strict:
                     raise CollectionError(message)
                 warnings.append(message)
                 continue
-            if encrypted_voters and len(encrypted_voters) > len(set(captured)):
-                message = (
-                    f"{item_date}: {len(encrypted_voters)} poll vote(s) exist "
-                    f"but only {len(set(captured))} were captured by the event "
-                    "ingester; refusing to send an incomplete report."
+            missing_from_ingester = stored_voters - live_voters
+            if missing_from_ingester:
+                warnings.append(
+                    f"{item_date}: {len(missing_from_ingester)} poll voter(s) "
+                    "came from stored poll updates, not the live ingester."
                 )
-                if strict:
-                    raise CollectionError(message)
-                warnings.append(message)
             activity = 2
             kind = "poll"
         else:

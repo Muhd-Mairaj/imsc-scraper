@@ -203,7 +203,7 @@ def test_incomplete_history_is_a_warning_in_lenient_mode(tmp_path: Path):
     assert any("History may not reach" in warning for warning in result.warnings)
 
 
-def test_encrypted_poll_votes_without_ingested_votes_fail_closed(tmp_path: Path):
+def test_stored_poll_updates_supply_voters_before_the_ingester_started(tmp_path: Path):
     poll_with_updates = poll(
         START_S + 7200,
         _data={
@@ -218,7 +218,26 @@ def test_encrypted_poll_votes_without_ingested_votes_fail_closed(tmp_path: Path)
         lids={"alice@lid": "60123@c.us"},
     )
 
-    with pytest.raises(CollectionError, match="encrypted vote"):
+    result = collect_engagement(waha, config(), store(tmp_path), WINDOW, "me@lid")
+
+    assert result.items[0].participant_displays == ("@alice",)
+    assert any("stored poll updates" in warning for warning in result.warnings)
+
+
+def test_encrypted_poll_updates_without_voter_keys_fail_closed(tmp_path: Path):
+    poll_with_updates = poll(
+        START_S + 7200,
+        _data={
+            "message": {"pollCreationMessage": {"name": "Checkin"}},
+            "pollUpdates": [{"vote": "encrypted"}],
+        },
+    )
+    waha = FakeWaha(
+        [marker(START_S + 3600), poll_with_updates],
+        oldest=oldest_before_window(),
+    )
+
+    with pytest.raises(CollectionError, match="no recoverable voter identities"):
         collect_engagement(waha, config(), store(tmp_path), WINDOW, "me@lid")
 
 
