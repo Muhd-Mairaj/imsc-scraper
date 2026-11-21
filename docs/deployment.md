@@ -21,8 +21,8 @@ timers.
 git clone <this repo>
 cd imsc-scraper
 cp .env.example .env
-# Set WAHA_API_KEY to a long random string. Optionally set IMSC_UID/IMSC_GID
-# to the owner of ./data.
+# Set WAHA_API_KEY and the dashboard/Swagger passwords to long random strings.
+# Optionally set IMSC_UID/IMSC_GID to the owner of ./data.
 mkdir -p data
 docker compose up -d waha imsc-ingest
 ```

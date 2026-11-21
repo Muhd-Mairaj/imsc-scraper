@@ -6,6 +6,10 @@ services:
       WHATSAPP_DEFAULT_ENGINE: GOWS
       WHATSAPP_START_SESSION: default
       WAHA_API_KEY: ${WAHA_API_KEY:?set WAHA_API_KEY in .env}
+      WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-admin}
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?set WAHA_DASHBOARD_PASSWORD in .env}
+      WHATSAPP_SWAGGER_USERNAME: ${WHATSAPP_SWAGGER_USERNAME:-admin}
+      WHATSAPP_SWAGGER_PASSWORD: ${WHATSAPP_SWAGGER_PASSWORD:?set WHATSAPP_SWAGGER_PASSWORD in .env}
       # The ingester is the only consumer; the report reads WAHA's store.
       WHATSAPP_HOOK_URL: http://imsc-ingest:8000/webhook
       WHATSAPP_HOOK_EVENTS: poll.vote,message.reaction
