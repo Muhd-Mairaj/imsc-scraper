@@ -245,3 +245,67 @@ def test_a_chat_with_no_stored_messages_fails_closed(tmp_path: Path):
     waha = FakeWaha([], before=[])
     with pytest.raises(CollectionError, match="no message before"):
         collect_engagement(waha, config(), store(tmp_path), WINDOW, "me@lid")
+
+
+def test_gows_source_web_msg_poll_updates_are_read(tmp_path: Path):
+    poll_message = WahaMessage(
+        {
+            "id": "poll1",
+            "timestamp": START_S + 7200,
+            "from": "g@g.us",
+            "fromMe": False,
+            "_data": {
+                "Message": {"pollCreationMessageV2": {"name": "Checkin"}},
+                "SourceWebMsg": {
+                    "pollUpdates": [
+                        {
+                            "pollUpdateMessageKey": {
+                                "participant": "alice@lid",
+                                "fromMe": False,
+                            }
+                        }
+                    ]
+                },
+            },
+        }
+    )
+    waha = FakeWaha(
+        [marker(START_S + 3600), poll_message],
+        before=oldest_before_window(),
+        contacts={"alice@lid": {"username": "alice", "number": "60123"}},
+        lids={"alice@lid": "60123@c.us"},
+    )
+
+    result = collect_engagement(waha, config(), store(tmp_path), WINDOW, "me@lid")
+
+    assert result.items[0].activity == 2
+    assert result.items[0].participant_displays == ("@alice",)
+
+
+def test_gows_source_web_msg_reactions_are_read(tmp_path: Path):
+    post = WahaMessage(
+        {
+            "id": "post1",
+            "timestamp": START_S + 7200,
+            "from": "g@g.us",
+            "fromMe": False,
+            "_data": {
+                "SourceWebMsg": {
+                    "reactions": [
+                        {"key": {"participant": "bob@lid", "fromMe": False}, "text": "👍"}
+                    ]
+                }
+            },
+        }
+    )
+    waha = FakeWaha(
+        [marker(START_S + 3600), post],
+        before=oldest_before_window(),
+        contacts={"bob@lid": {"username": "bob", "number": "60124"}},
+        lids={"bob@lid": "60124@c.us"},
+    )
+
+    result = collect_engagement(waha, config(), store(tmp_path), WINDOW, "me@lid")
+
+    assert result.items[0].activity == 1
+    assert result.items[0].participant_displays == ("@bob",)

@@ -133,20 +133,32 @@ class WahaMessage:
         data = self.raw.get("_data")
         if not isinstance(data, dict):
             return ()
-        reactions = data.get("reactions")
-        if not isinstance(reactions, list):
-            return ()
-        return tuple(item for item in reactions if isinstance(item, dict))
+        items: list[JSON] = []
+        source = data.get("SourceWebMsg")
+        for container in (data, source):
+            if not isinstance(container, dict):
+                continue
+            for key in ("reactions", "Reactions"):
+                value = container.get(key)
+                if isinstance(value, list):
+                    items.extend(item for item in value if isinstance(item, dict))
+        return tuple(items)
 
     @property
     def poll_updates(self) -> tuple[JSON, ...]:
         data = self.raw.get("_data")
         if not isinstance(data, dict):
             return ()
-        updates = data.get("pollUpdates")
-        if not isinstance(updates, list):
-            return ()
-        return tuple(item for item in updates if isinstance(item, dict))
+        items: list[JSON] = []
+        source = data.get("SourceWebMsg")
+        for container in (data, source):
+            if not isinstance(container, dict):
+                continue
+            for key in ("pollUpdates", "PollUpdates"):
+                value = container.get(key)
+                if isinstance(value, list):
+                    items.extend(item for item in value if isinstance(item, dict))
+        return tuple(items)
 
     @property
     def date(self) -> date | None:

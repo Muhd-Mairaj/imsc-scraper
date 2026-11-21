@@ -109,7 +109,12 @@ def poll_update_voters(updates: tuple[dict[str, Any], ...], me_id: str | None) -
                 voters.add(me_id)
             continue
         voter = _key_value(
-            key, "participant", "participantAlt", "remoteJid", "remoteJidAlt"
+            key,
+            "participant",
+            "participantAlt",
+            "remoteJID",
+            "remoteJid",
+            "remoteJidAlt",
         ) or _key_value(update, "participant", "from", "sender")
         if voter:
             voters.add(voter)
@@ -121,7 +126,12 @@ def reaction_sender(reaction: dict[str, Any], me_id: str | None) -> str | None:
     if isinstance(key, dict) and key.get("fromMe") is True:
         return me_id
     return _key_value(
-        key, "participant", "participantAlt", "remoteJid", "remoteJidAlt"
+        key,
+        "participant",
+        "participantAlt",
+        "remoteJID",
+        "remoteJid",
+        "remoteJidAlt",
     ) or _key_value(reaction, "senderId", "sender", "participant", "participantAlt", "from")
 
 
