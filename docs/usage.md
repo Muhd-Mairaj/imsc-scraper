@@ -96,6 +96,7 @@ The state is written atomically with mode `0600`.
 | Variable | Default | Used by |
 |---|---|---|
 | `WAHA_URL` | `http://localhost:3000` | report |
+| `WAHA_PUBLIC_URL` | `http://localhost:3100` | report (dashboard/QR display) |
 | `WAHA_SESSION` | `default` | report |
 | `WAHA_API_KEY` | unset | report (required when WAHA has a key) |
 | `WAHA_READY_TIMEOUT` | `600` | report (seconds to wait for `WORKING`) |

@@ -36,13 +36,13 @@ docker compose logs -f waha
 
 ### Pair the device
 
-The WAHA API is bound to `127.0.0.1:3000`. From your machine:
+The WAHA API is bound to `127.0.0.1:3100`. From your machine:
 
 ```sh
-ssh -L 3000:localhost:3000 <user>@<server>
+ssh -L 3100:localhost:3100 <user>@<server>
 ```
 
-Open <http://localhost:3000>, create/start the `default` session, and scan the
+Open <http://localhost:3100>, create/start the `default` session, and scan the
 QR from WhatsApp → Linked devices. The QR is also printed in
 `docker compose logs waha` because `WAHA_PRINT_QR=True`.
 
@@ -166,7 +166,7 @@ WAHA has not finished its initial sync, or GOWS storage was disabled. Check:
 ```sh
 docker compose --profile tools run --rm imsc-report status
 curl -H "X-Api-Key: $WAHA_API_KEY" \
-  "http://localhost:3000/api/default/chats/<chatId>/messages?limit=1&sortOrder=asc"
+  "http://localhost:3100/api/default/chats/<chatId>/messages?limit=1&sortOrder=asc"
 ```
 
 Wait for the sync, then retry. The GOWS storage defaults are on; keep

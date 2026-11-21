@@ -22,7 +22,7 @@ services:
       - ./data/waha:/app/.sessions
     ports:
       # Keep the dashboard and QR endpoint off the public interface.
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3100:3000"
     mem_limit: 512m
 
   imsc-ingest:
@@ -49,6 +49,7 @@ services:
     user: "${IMSC_UID:-1000}:${IMSC_GID:-1000}"
     environment:
       WAHA_URL: http://waha:3000
+      WAHA_PUBLIC_URL: http://localhost:3100
       WAHA_SESSION: default
       WAHA_API_KEY: ${WAHA_API_KEY:?set WAHA_API_KEY in .env}
       IMSC_DATA_DIR: /app/data

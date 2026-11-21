@@ -119,11 +119,15 @@ def _waha_client() -> WahaClient:
     )
 
 
+def _public_url(waha: WahaClient) -> str:
+    return os.environ.get("WAHA_PUBLIC_URL", waha.base_url).rstrip("/")
+
+
 def _on_waha_status(status: str | None, _info: dict[str, object], waha: WahaClient) -> None:
     if status == "SCAN_QR_CODE":
         print(
             "WAHA is waiting for a linked-device scan.\n"
-            f"Open {waha.qr_url()} (or the WAHA dashboard) and scan the QR code."
+            f"Open {_public_url(waha)} (or the WAHA dashboard) and scan the QR code."
         )
     else:
         print(f"WAHA session status: {status or 'unknown'}")
@@ -150,7 +154,7 @@ def _wait_for_waha(waha: WahaClient, logger: Logger) -> dict[str, object]:
     except WahaError:
         logger.error(
             "WAHA is not ready. Pair the session in the WAHA dashboard "
-            f"(QR: {waha.qr_url()}) and retry."
+            f"(open {_public_url(waha)}) and retry."
         )
         raise
     logger.info("WAHA session is WORKING.")

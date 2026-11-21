@@ -26,7 +26,7 @@ cp .env.example .env
 # set WAHA_API_KEY in .env
 
 docker compose up -d waha imsc-ingest
-# Open http://localhost:3000 through an SSH tunnel and scan the QR code
+# Open http://localhost:3100 through an SSH tunnel and scan the QR code
 # (WhatsApp > Linked devices).
 
 docker compose --profile tools run --rm imsc-report setup
